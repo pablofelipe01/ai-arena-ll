@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crypto-llm-trading-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - .env
+    volumes:
+      # Mount source code for development (comment out for production)
+      - ./src:/app/src
+      - ./frontend:/app/frontend
+      - ./config:/app/config
+      # Persist logs
+      - ./logs:/app/logs
+    networks:
+      - crypto-llm-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/competition/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      - redis
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Redis for caching (optional but recommended)
+  redis:
+    image: redis:7-alpine
+    container_name: crypto-llm-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - crypto-llm-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  crypto-llm-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local
