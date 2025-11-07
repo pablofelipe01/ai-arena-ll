@@ -309,8 +309,9 @@ CREATE INDEX idx_market_data_symbol ON market_data(symbol);
 CREATE INDEX idx_market_data_timestamp ON market_data(data_timestamp DESC);
 CREATE INDEX idx_market_data_symbol_timestamp ON market_data(symbol, data_timestamp DESC);
 
--- Unique constraint: One record per symbol per minute
-CREATE UNIQUE INDEX idx_market_data_symbol_minute ON market_data(symbol, DATE_TRUNC('minute', data_timestamp));
+-- Unique constraint: One record per symbol per timestamp
+-- Note: Using direct timestamp instead of DATE_TRUNC to avoid IMMUTABLE function requirement
+CREATE UNIQUE INDEX idx_market_data_symbol_timestamp_unique ON market_data(symbol, data_timestamp);
 
 -- ============================================
 -- TABLE: rejected_decisions
