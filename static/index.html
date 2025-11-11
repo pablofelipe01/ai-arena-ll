@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto LLM Trading Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0e27;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 10px;
+        }
+
+        h1 {
+            color: white;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+
+        .status.connected {
+            background: #10b981;
+        }
+
+        .status.disconnected {
+            background: #ef4444;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: #1a1f3a;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #2a2f4a;
+        }
+
+        .metric:last-child {
+            border-bottom: none;
+        }
+
+        .metric-label {
+            color: #9ca3af;
+        }
+
+        .metric-value {
+            font-weight: bold;
+            color: #e0e0e0;
+        }
+
+        .metric-value.positive {
+            color: #10b981;
+        }
+
+        .metric-value.negative {
+            color: #ef4444;
+        }
+
+        .leaderboard {
+            list-style: none;
+        }
+
+        .leaderboard-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            margin-bottom: 10px;
+            background: #252a45;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .rank {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #667eea;
+            min-width: 40px;
+        }
+
+        .llm-info {
+            flex-grow: 1;
+            margin-left: 15px;
+        }
+
+        .llm-name {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .llm-stats {
+            font-size: 0.9em;
+            color: #9ca3af;
+        }
+
+        .position {
+            padding: 15px;
+            margin-bottom: 10px;
+            background: #252a45;
+            border-radius: 8px;
+            border-left: 4px solid #10b981;
+        }
+
+        .position.short {
+            border-left-color: #ef4444;
+        }
+
+        .position-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+
+        .position-details {
+            font-size: 0.9em;
+            color: #9ca3af;
+        }
+
+        .trade {
+            padding: 15px;
+            margin-bottom: 10px;
+            background: #252a45;
+            border-radius: 8px;
+            border-left: 4px solid #6366f1;
+        }
+
+        .trade-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .trade-details {
+            font-size: 0.85em;
+            color: #9ca3af;
+        }
+
+        .log-container {
+            max-height: 400px;
+            overflow-y: auto;
+            background: #0f1425;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85em;
+        }
+
+        .log-entry {
+            padding: 5px 0;
+            border-bottom: 1px solid #1a1f3a;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-time {
+            color: #9ca3af;
+        }
+
+        .log-type {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: bold;
+            margin: 0 5px;
+        }
+
+        .log-type.cycle {
+            background: #667eea;
+        }
+
+        .log-type.decision {
+            background: #10b981;
+        }
+
+        .log-type.market {
+            background: #f59e0b;
+        }
+
+        .log-type.error {
+            background: #ef4444;
+        }
+
+        .market-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .market-item {
+            padding: 15px;
+            background: #252a45;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .symbol {
+            font-weight: bold;
+            font-size: 1.1em;
+            margin-bottom: 10px;
+        }
+
+        .price {
+            font-size: 1.3em;
+            color: #e0e0e0;
+            margin-bottom: 5px;
+        }
+
+        .change {
+            font-size: 0.9em;
+        }
+
+        .change.positive {
+            color: #10b981;
+        }
+
+        .change.negative {
+            color: #ef4444;
+        }
+
+        /* Loading animation */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #9ca3af;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            border: 4px solid #1a1f3a;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1a1f3a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #764ba2;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 Crypto LLM Trading Dashboard</h1>
+            <span class="status" id="connection-status">Connecting...</span>
+        </header>
+
+        <!-- Summary Cards -->
+        <div class="grid">
+            <div class="card">
+                <h2>📊 System Summary</h2>
+                <div class="metric">
+                    <span class="metric-label">Total Equity</span>
+                    <span class="metric-value" id="total-equity">$0.00</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Total PnL</span>
+                    <span class="metric-value" id="total-pnl">$0.00</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Total PnL %</span>
+                    <span class="metric-value" id="total-pnl-pct">0.00%</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Total Trades</span>
+                    <span class="metric-value" id="total-trades">0</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Open Positions</span>
+                    <span class="metric-value" id="open-positions">0</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>⏱️ Scheduler Status</h2>
+                <div class="metric">
+                    <span class="metric-label">Status</span>
+                    <span class="metric-value" id="scheduler-status">-</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Total Executions</span>
+                    <span class="metric-value" id="total-executions">0</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Total Errors</span>
+                    <span class="metric-value" id="total-errors">0</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Last Execution</span>
+                    <span class="metric-value" id="last-execution">Never</span>
+                </div>
+                <div class="metric">
+                    <span class="metric-label">Last Duration</span>
+                    <span class="metric-value" id="last-duration">-</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Leaderboard -->
+        <div class="card">
+            <h2>🏆 LLM Leaderboard</h2>
+            <ul class="leaderboard" id="leaderboard">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Loading leaderboard...</p>
+                </div>
+            </ul>
+        </div>
+
+        <!-- Market Data -->
+        <div class="card">
+            <h2>💹 Market Data</h2>
+            <div class="market-grid" id="market-data">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Loading market data...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Open Positions -->
+        <div class="card">
+            <h2>📈 Open Positions</h2>
+            <div id="positions-list">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Loading positions...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Trades -->
+        <div class="card">
+            <h2>📝 Recent Trades</h2>
+            <div id="trades-list">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Loading trades...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live Activity Log -->
+        <div class="card">
+            <h2>📡 Live Activity Log</h2>
+            <div class="log-container" id="activity-log">
+                <div class="log-entry">
+                    <span class="log-time">--:--:--</span>
+                    <span class="log-message">Waiting for events...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // WebSocket connection
+        let ws = null;
+        let reconnectInterval = null;
+
+        // Connect to WebSocket
+        function connect() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                updateConnectionStatus('connected');
+                clearInterval(reconnectInterval);
+                addLog('system', 'Connected to trading system');
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                updateConnectionStatus('disconnected');
+                addLog('error', 'Disconnected from trading system');
+
+                // Reconnect after 5 seconds
+                reconnectInterval = setInterval(() => {
+                    console.log('Attempting to reconnect...');
+                    connect();
+                }, 5000);
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+                handleMessage(message);
+            };
+        }
+
+        // Handle incoming messages
+        function handleMessage(message) {
+            console.log('Received:', message);
+
+            switch (message.type) {
+                case 'connection':
+                    addLog('system', message.message);
+                    break;
+
+                case 'initial_data':
+                    updateTradingStatus(message.trading_status);
+                    break;
+
+                case 'market_snapshot':
+                    updateMarketData(message.data);
+                    break;
+
+                case 'scheduler_status':
+                    updateSchedulerStatus(message.status);
+                    break;
+
+                case 'cycle_start':
+                    addLog('cycle', 'Trading cycle starting...');
+                    break;
+
+                case 'cycle_complete':
+                    addLog('cycle', `Trading cycle completed in ${message.result.duration_seconds?.toFixed(2)}s`);
+                    if (message.result.result) {
+                        updateTradingStatus(message.result.result);
+                    }
+                    break;
+
+                case 'market_update':
+                    updateMarketData(message.data);
+                    addLog('market', 'Market data updated');
+                    break;
+
+                case 'llm_decision':
+                    const action = message.decision.action;
+                    addLog('decision', `${message.llm_id}: ${action} - ${message.execution.message || 'Executed'}`);
+                    break;
+
+                case 'position_update':
+                    addLog('decision', `${message.llm_id}: Position ${message.action} - ${message.position.symbol}`);
+                    break;
+
+                case 'account_update':
+                    updateAccounts(message.accounts);
+                    break;
+
+                case 'error':
+                    addLog('error', message.message);
+                    break;
+            }
+        }
+
+        // Update connection status
+        function updateConnectionStatus(status) {
+            const element = document.getElementById('connection-status');
+            element.textContent = status === 'connected' ? '● Connected' : '● Disconnected';
+            element.className = `status ${status}`;
+        }
+
+        // Update trading status
+        function updateTradingStatus(status) {
+            if (!status) return;
+
+            // Update summary
+            const summary = status.summary || {};
+            document.getElementById('total-equity').textContent = `$${summary.total_equity_usdt?.toFixed(2) || '0.00'}`;
+
+            const totalPnl = summary.total_pnl || 0;
+            const pnlElement = document.getElementById('total-pnl');
+            pnlElement.textContent = `$${totalPnl.toFixed(2)}`;
+            pnlElement.className = `metric-value ${totalPnl >= 0 ? 'positive' : 'negative'}`;
+
+            const pnlPct = summary.total_pnl_pct || 0;
+            const pnlPctElement = document.getElementById('total-pnl-pct');
+            pnlPctElement.textContent = `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%`;
+            pnlPctElement.className = `metric-value ${pnlPct >= 0 ? 'positive' : 'negative'}`;
+
+            document.getElementById('total-trades').textContent = summary.total_trades || 0;
+
+            // Update open positions count
+            const positionsCount = Object.values(status.open_positions || {}).reduce((sum, positions) => sum + positions.length, 0);
+            document.getElementById('open-positions').textContent = positionsCount;
+
+            // Update leaderboard
+            if (status.accounts) {
+                updateLeaderboard(status.accounts);
+            }
+
+            // Update positions
+            if (status.open_positions) {
+                updatePositions(status.open_positions);
+            }
+
+            // Update trades
+            if (status.recent_trades) {
+                updateTrades(status.recent_trades);
+            }
+        }
+
+        // Update scheduler status
+        function updateSchedulerStatus(status) {
+            if (!status) return;
+
+            document.getElementById('scheduler-status').textContent = status.is_running ? 'RUNNING' : 'STOPPED';
+
+            const jobState = status.job_state || {};
+            document.getElementById('total-executions').textContent = jobState.total_executions || 0;
+            document.getElementById('total-errors').textContent = jobState.total_errors || 0;
+
+            if (jobState.last_execution) {
+                const date = new Date(jobState.last_execution);
+                document.getElementById('last-execution').textContent = date.toLocaleTimeString();
+            }
+
+            if (jobState.last_duration) {
+                document.getElementById('last-duration').textContent = `${jobState.last_duration.toFixed(2)}s`;
+            }
+        }
+
+        // Update leaderboard
+        function updateLeaderboard(accounts) {
+            const leaderboard = document.getElementById('leaderboard');
+
+            // Sort by total PnL
+            const sorted = [...accounts].sort((a, b) => b.total_pnl - a.total_pnl);
+
+            leaderboard.innerHTML = sorted.map((account, index) => {
+                const pnl = account.total_pnl || 0;
+                const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+
+                return `
+                    <li class="leaderboard-item">
+                        <div class="rank">#${index + 1}</div>
+                        <div class="llm-info">
+                            <div class="llm-name">${account.llm_id}</div>
+                            <div class="llm-stats">
+                                Equity: $${account.equity_usdt?.toFixed(2)} |
+                                PnL: <span class="${pnlClass}">$${pnl.toFixed(2)}</span> |
+                                Win Rate: ${account.win_rate?.toFixed(1)}%
+                            </div>
+                        </div>
+                    </li>
+                `;
+            }).join('');
+        }
+
+        // Update market data
+        function updateMarketData(data) {
+            if (!data || !data.symbols) return;
+
+            const marketGrid = document.getElementById('market-data');
+
+            marketGrid.innerHTML = Object.entries(data.symbols).map(([symbol, info]) => {
+                const change = info.price_change_pct_24h || 0;
+                const changeClass = change >= 0 ? 'positive' : 'negative';
+
+                return `
+                    <div class="market-item">
+                        <div class="symbol">${symbol}</div>
+                        <div class="price">$${info.price?.toFixed(2) || '0.00'}</div>
+                        <div class="change ${changeClass}">
+                            ${change >= 0 ? '+' : ''}${change.toFixed(2)}%
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Update positions
+        function updatePositions(positions) {
+            const positionsList = document.getElementById('positions-list');
+
+            const allPositions = Object.entries(positions).flatMap(([llmId, pos]) =>
+                pos.map(p => ({ ...p, llm_id: llmId }))
+            );
+
+            if (allPositions.length === 0) {
+                positionsList.innerHTML = '<div class="loading"><p>No open positions</p></div>';
+                return;
+            }
+
+            positionsList.innerHTML = allPositions.map(pos => {
+                const pnl = pos.unrealized_pnl_usd || 0;
+                const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+
+                return `
+                    <div class="position ${pos.side.toLowerCase()}">
+                        <div class="position-header">
+                            <span>${pos.llm_id} - ${pos.symbol}</span>
+                            <span class="${pnlClass}">$${pnl.toFixed(2)}</span>
+                        </div>
+                        <div class="position-details">
+                            ${pos.side} | Entry: $${pos.entry_price?.toFixed(2)} |
+                            Leverage: ${pos.leverage}x | Margin: $${pos.margin_used?.toFixed(2)}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Update trades
+        function updateTrades(trades) {
+            const tradesList = document.getElementById('trades-list');
+
+            if (!trades || trades.length === 0) {
+                tradesList.innerHTML = '<div class="loading"><p>No recent trades</p></div>';
+                return;
+            }
+
+            tradesList.innerHTML = trades.slice(0, 10).map(trade => {
+                const pnl = trade.pnl_usd || 0;
+                const pnlClass = pnl >= 0 ? 'positive' : 'negative';
+
+                return `
+                    <div class="trade">
+                        <div class="trade-header">
+                            <span>${trade.symbol} (${trade.side})</span>
+                            <span class="${pnlClass}">$${pnl.toFixed(2)}</span>
+                        </div>
+                        <div class="trade-details">
+                            Entry: $${trade.entry_price?.toFixed(2)} | Exit: $${trade.exit_price?.toFixed(2)} |
+                            Reason: ${trade.exit_reason} | Duration: ${trade.duration_minutes}min
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Add log entry
+        function addLog(type, message) {
+            const logContainer = document.getElementById('activity-log');
+            const time = new Date().toLocaleTimeString();
+
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `
+                <span class="log-time">${time}</span>
+                <span class="log-type ${type}">${type.toUpperCase()}</span>
+                <span class="log-message">${message}</span>
+            `;
+
+            logContainer.insertBefore(entry, logContainer.firstChild);
+
+            // Keep only last 50 entries
+            while (logContainer.children.length > 50) {
+                logContainer.removeChild(logContainer.lastChild);
+            }
+        }
+
+        // Initialize
+        connect();
+    </script>
+</body>
+</html>

@@ -11,12 +11,20 @@ Run with: uvicorn src.api.main:app --reload --port 8000
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from datetime import datetime
 
-from src.api.routes import trading_router, market_router, health_router, scheduler_router
+from src.api.routes import (
+    trading_router,
+    market_router,
+    health_router,
+    scheduler_router,
+    websocket_router
+)
 from src.api.dependencies import (
     initialize_all_services,
     cleanup_all_services,
@@ -185,6 +193,22 @@ app.include_router(market_router)
 
 # Scheduler routes
 app.include_router(scheduler_router)
+
+# WebSocket routes
+app.include_router(websocket_router)
+
+
+# ============================================================================
+# Static Files (Dashboard)
+# ============================================================================
+
+# Mount static files for dashboard
+static_dir = Path(__file__).parent.parent.parent / "static"
+if static_dir.exists():
+    app.mount("/dashboard", StaticFiles(directory=str(static_dir), html=True), name="static")
+    app_logger.info(f"Dashboard mounted at /dashboard (static dir: {static_dir})")
+else:
+    app_logger.warning(f"Static directory not found: {static_dir}")
 
 
 # ============================================================================
