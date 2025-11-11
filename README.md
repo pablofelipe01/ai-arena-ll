@@ -92,11 +92,13 @@ Open browser: **http://localhost:8000/dashboard/**
 
 | Document | Description |
 |----------|-------------|
-| [SETUP.md](SETUP.md) | Complete setup and installation guide |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture and design |
-| [API.md](API.md) | Complete API reference (23 endpoints) |
-| [TESTING.md](TESTING.md) | Testing guide and test suite documentation |
-| [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) | Developer guide for contributors |
+| [SETUP.md](docs/SETUP.md) | Complete setup and installation guide |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and design |
+| [API.md](docs/API.md) | Complete API reference (23 endpoints) |
+| [TESTING.md](docs/TESTING.md) | Testing guide and test suite documentation |
+| [DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) | Developer guide for contributors |
+| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Production deployment guide |
+| [DEMO_GUIDE.md](docs/DEMO_GUIDE.md) | 24-hour demo preparation guide |
 
 ---
 
@@ -385,7 +387,7 @@ Contributions are welcome! Please:
 5. Format code with Black (`black src/ tests/`)
 6. Submit a pull request
 
-See [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for details.
+See [DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) for details.
 
 ---
 
