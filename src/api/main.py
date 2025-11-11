@@ -16,8 +16,13 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 
-from src.api.routes import trading_router, market_router, health_router
-from src.api.dependencies import initialize_all_services, cleanup_all_services
+from src.api.routes import trading_router, market_router, health_router, scheduler_router
+from src.api.dependencies import (
+    initialize_all_services,
+    cleanup_all_services,
+    get_trading_service
+)
+from src.background.scheduler import initialize_scheduler, cleanup_scheduler
 from src.utils.logger import app_logger
 from config.settings import settings
 
@@ -44,6 +49,20 @@ async def lifespan(app: FastAPI):
         # Initialize all services
         initialize_all_services()
         app_logger.info("API server ready")
+
+        # Initialize and start background scheduler
+        trading_service = get_trading_service()
+        scheduler = initialize_scheduler(trading_service)
+
+        # Start scheduler with 5-minute intervals
+        # Set start_immediately=True to run first cycle on startup
+        scheduler.start(
+            interval_minutes=5,
+            start_immediately=False  # Change to True for immediate first cycle
+        )
+
+        app_logger.info("Background scheduler initialized and started")
+
     except Exception as e:
         app_logger.error(f"Failed to initialize services: {e}", exc_info=True)
         raise
@@ -52,7 +71,13 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     app_logger.info("Shutting down FastAPI application...")
+
+    # Stop background scheduler
+    cleanup_scheduler()
+
+    # Cleanup services
     cleanup_all_services()
+
     app_logger.info("API server stopped")
 
 
@@ -157,6 +182,9 @@ app.include_router(trading_router)
 
 # Market data routes
 app.include_router(market_router)
+
+# Scheduler routes
+app.include_router(scheduler_router)
 
 
 # ============================================================================
