@@ -72,11 +72,14 @@ class TradingService:
         Execute one complete trading cycle for all LLMs.
 
         Workflow:
-        1. Fetch market data and indicators
-        2. Check and execute automatic triggers (SL/TP)
-        3. Get decisions from each LLM
-        4. Execute validated decisions
-        5. Sync state to database
+        1. Fetch market data and current prices
+        2. Sync virtual accounts with real Binance positions
+        3. Calculate technical indicators
+        4. Check and execute automatic triggers (SL/TP)
+        5. Get decisions from each LLM
+        6. Execute validated decisions
+        7. Update unrealized PnL
+        8. Sync state to database
 
         Returns:
             Dict with cycle results and statistics
@@ -93,31 +96,39 @@ class TradingService:
             current_prices = self.market_data.get_current_prices(use_cache=False)
             market_snapshot = self.market_data.get_market_snapshot()
 
-            # Step 2: Calculate indicators
-            app_logger.info("Step 2: Calculating technical indicators...")
+            # Step 2: Sync accounts with Binance real positions
+            app_logger.info("Step 2: Syncing accounts from Binance...")
+            sync_result = self.accounts.sync_from_binance(current_prices)
+            if sync_result.get("success"):
+                app_logger.info(f"Binance sync: {sync_result.get('stats', {})}")
+            else:
+                app_logger.warning(f"Binance sync failed: {sync_result.get('error', 'Unknown')}")
+
+            # Step 3: Calculate indicators
+            app_logger.info("Step 3: Calculating technical indicators...")
             all_indicators = self.indicators.calculate_indicators_for_all_symbols()
 
-            # Step 3: Handle automatic triggers (SL/TP)
-            app_logger.info("Step 3: Checking automatic triggers...")
+            # Step 4: Handle automatic triggers (SL/TP)
+            app_logger.info("Step 4: Checking automatic triggers...")
             trigger_results = self._handle_automatic_triggers(current_prices)
 
-            # Step 4: Get LLM decisions and execute
-            app_logger.info("Step 4: Getting LLM decisions...")
+            # Step 5: Get LLM decisions and execute
+            app_logger.info("Step 5: Getting LLM decisions...")
             decision_results = self._process_llm_decisions(
                 current_prices,
                 all_indicators
             )
 
-            # Step 5: Update unrealized PnL for all accounts
-            app_logger.info("Step 5: Updating unrealized PnL...")
+            # Step 6: Update unrealized PnL for all accounts
+            app_logger.info("Step 6: Updating unrealized PnL...")
             for llm_id, account in self.accounts.get_all_accounts().items():
                 account.update_unrealized_pnl(current_prices)
 
-            # Step 6: Sync to database
-            app_logger.info("Step 6: Syncing to database...")
+            # Step 7: Sync to database
+            app_logger.info("Step 7: Syncing to database...")
             self.accounts.sync_all_accounts()
 
-            # Step 7: Save market data snapshot
+            # Step 8: Save market data snapshot
             self._save_market_snapshot(market_snapshot, all_indicators)
 
             # Build results
@@ -127,6 +138,7 @@ class TradingService:
                 "success": True,
                 "cycle_start": cycle_start.isoformat(),
                 "cycle_duration_seconds": cycle_duration,
+                "binance_sync": sync_result,
                 "market_data": {
                     "symbols_tracked": len(current_prices),
                     "gainers": market_snapshot["summary"]["gainers"],

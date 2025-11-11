@@ -189,7 +189,8 @@ class TradeExecutor:
                     side=side,
                     entry_price=entry_price,
                     quantity_usd=quantity_usd,
-                    leverage=leverage
+                    leverage=leverage,
+                    llm_id=account.llm_id
                 )
             except Exception as e:
                 app_logger.error(f"{account.llm_id}: Failed to open position on Binance: {e}")
@@ -328,7 +329,8 @@ class TradeExecutor:
         side: str,
         entry_price: Decimal,
         quantity_usd: Decimal,
-        leverage: int
+        leverage: int,
+        llm_id: str
     ) -> None:
         """
         Open position on Binance.
@@ -339,6 +341,7 @@ class TradeExecutor:
             entry_price: Entry price
             quantity_usd: Position size in USD
             leverage: Leverage to use
+            llm_id: LLM identifier for tracking
         """
         # Set leverage
         self.binance.set_leverage(symbol, leverage)
@@ -352,14 +355,20 @@ class TradeExecutor:
         # Determine order side
         order_side = "BUY" if side == "LONG" else "SELL"
 
-        # Create market order
+        # Generate clientOrderId with LLM identifier
+        # Format: LLM-A_BTCUSDT_1234567890
+        import time
+        client_order_id = f"{llm_id}_{symbol}_{int(time.time() * 1000)}"
+
+        # Create market order with clientOrderId
         order = self.binance.create_market_order(
             symbol=symbol,
             side=order_side,
-            quantity=quantity
+            quantity=quantity,
+            newClientOrderId=client_order_id
         )
 
-        app_logger.info(f"Binance order executed: {order}")
+        app_logger.info(f"Binance order executed for {llm_id}: {order}")
 
     def _close_binance_position(
         self,

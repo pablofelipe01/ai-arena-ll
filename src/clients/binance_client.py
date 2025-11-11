@@ -99,6 +99,9 @@ class BinanceClient:
             "Content-Type": "application/json"
         })
 
+        # Cache for symbol info (to avoid repeated API calls)
+        self._symbol_info_cache: Dict[str, Dict[str, Any]] = {}
+
         app_logger.info(f"Initialized BinanceClient ({'Testnet' if testnet else 'Mainnet'})")
 
     def _get_timestamp(self) -> int:
@@ -272,6 +275,18 @@ class BinanceClient:
         """
         return self._request("GET", self.TICKER_24HR, params={"symbol": symbol})
 
+    def get_ticker_24h(self, symbol: str) -> Dict[str, Any]:
+        """
+        Alias for get_ticker_24hr (compatibility method).
+
+        Args:
+            symbol: Par de trading
+
+        Returns:
+            Dict con price, volume, priceChange, etc.
+        """
+        return self.get_ticker_24hr(symbol)
+
     def get_klines(
         self,
         symbol: str,
@@ -399,7 +414,8 @@ class BinanceClient:
         symbol: str,
         side: str,
         quantity: Decimal,
-        reduce_only: bool = False
+        reduce_only: bool = False,
+        newClientOrderId: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Crear orden MARKET (ejecución inmediata).
@@ -409,16 +425,22 @@ class BinanceClient:
             side: 'BUY' o 'SELL'
             quantity: Cantidad
             reduce_only: Si True, solo reduce posición
+            newClientOrderId: Client order ID personalizado para tracking
 
         Returns:
             Dict con información de la orden
         """
+        kwargs = {}
+        if newClientOrderId:
+            kwargs["newClientOrderId"] = newClientOrderId
+
         return self.create_order(
             symbol=symbol,
             side=side,
             order_type="MARKET",
             quantity=quantity,
-            reduce_only=reduce_only
+            reduce_only=reduce_only,
+            **kwargs
         )
 
     def create_limit_order(
@@ -576,6 +598,62 @@ class BinanceClient:
             if Decimal(pos.get("positionAmt", "0")) != 0
         ]
 
+    def get_position_orders(self, symbol: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Obtener órdenes recientes para un símbolo.
+
+        Útil para encontrar el clientOrderId de las órdenes que abrieron posiciones.
+
+        Args:
+            symbol: Par de trading
+            limit: Número de órdenes a retornar
+
+        Returns:
+            Lista de órdenes recientes
+        """
+        return self.get_all_orders(symbol=symbol, limit=limit)
+
+    def get_open_positions_with_client_ids(self) -> List[Dict[str, Any]]:
+        """
+        Obtener posiciones abiertas con sus clientOrderIds.
+
+        Para cada posición abierta, busca las órdenes recientes y extrae
+        el clientOrderId de la orden que abrió la posición.
+
+        Returns:
+            Lista de posiciones con campo 'clientOrderId' agregado
+        """
+        open_positions = self.get_open_positions()
+
+        for position in open_positions:
+            symbol = position["symbol"]
+            position_amt = Decimal(position["positionAmt"])
+
+            try:
+                # Get recent orders for this symbol
+                recent_orders = self.get_all_orders(symbol=symbol, limit=50)
+
+                # Find the order that opened this position
+                # Look for filled orders on the same side
+                position_side = "BUY" if position_amt > 0 else "SELL"
+
+                # Find most recent filled order that matches the side
+                client_order_id = None
+                for order in reversed(recent_orders):  # Most recent first
+                    if (order["side"] == position_side and
+                        order["status"] == "FILLED" and
+                        "clientOrderId" in order):
+                        client_order_id = order["clientOrderId"]
+                        break
+
+                position["clientOrderId"] = client_order_id
+
+            except Exception as e:
+                app_logger.warning(f"Failed to get clientOrderId for {symbol}: {e}")
+                position["clientOrderId"] = None
+
+        return open_positions
+
     def close_position(
         self,
         symbol: str,
@@ -717,3 +795,60 @@ class BinanceClient:
             params["symbol"] = symbol
 
         return self._request("GET", "/fapi/v1/exchangeInfo", params=params)
+
+    def round_step_size(self, symbol: str, quantity: Decimal) -> Decimal:
+        """
+        Redondear cantidad según el step size del símbolo.
+
+        Args:
+            symbol: Par de trading (ej: BTCUSDT)
+            quantity: Cantidad a redondear
+
+        Returns:
+            Cantidad redondeada según el step size
+        """
+        # Check cache first
+        if symbol not in self._symbol_info_cache:
+            try:
+                # Get exchange info for this symbol
+                info = self.get_exchange_info(symbol=symbol)
+
+                # Find the symbol in the response
+                symbol_info = None
+                for s in info.get("symbols", []):
+                    if s["symbol"] == symbol:
+                        symbol_info = s
+                        break
+
+                if not symbol_info:
+                    app_logger.warning(f"Symbol {symbol} not found in exchange info, using default precision")
+                    return quantity.quantize(Decimal("0.001"))
+
+                # Extract LOT_SIZE filter
+                step_size = None
+                for f in symbol_info.get("filters", []):
+                    if f["filterType"] == "LOT_SIZE":
+                        step_size = Decimal(str(f["stepSize"]))
+                        break
+
+                if not step_size:
+                    app_logger.warning(f"LOT_SIZE not found for {symbol}, using default precision")
+                    return quantity.quantize(Decimal("0.001"))
+
+                # Cache the step size
+                self._symbol_info_cache[symbol] = {"step_size": step_size}
+
+            except Exception as e:
+                app_logger.error(f"Failed to get exchange info for {symbol}: {e}")
+                # Fallback to default precision
+                return quantity.quantize(Decimal("0.001"))
+
+        # Get cached step size
+        step_size = self._symbol_info_cache[symbol]["step_size"]
+
+        # Round down to nearest step size
+        precision = abs(step_size.as_tuple().exponent)
+        rounded = (quantity // step_size) * step_size
+        rounded = rounded.quantize(Decimal(10) ** -precision)
+
+        return rounded

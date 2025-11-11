@@ -137,8 +137,10 @@ def get_account_service() -> AccountService:
     if _account_service is None:
         app_logger.info("Initializing AccountService...")
         supabase = get_supabase_client()
+        binance = get_binance_client()
         _account_service = AccountService(
             supabase_client=supabase,
+            binance_client=binance,
             initial_balance=Decimal(str(settings.INITIAL_BALANCE_PER_LLM))
         )
         app_logger.info("AccountService initialized")
@@ -161,7 +163,7 @@ def get_trading_service() -> TradingService:
 
         # Create core components
         risk_manager = RiskManager()
-        trade_executor = TradeExecutor(binance_client=binance)
+        trade_executor = TradeExecutor(binance_client=binance, risk_manager=risk_manager)
 
         # Create trading service
         _trading_service = TradingService(

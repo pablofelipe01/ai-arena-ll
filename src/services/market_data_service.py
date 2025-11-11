@@ -106,8 +106,8 @@ class MarketDataService:
 
         for symbol in self.symbols:
             try:
-                ticker = self.binance.get_ticker_price(symbol)
-                prices[symbol] = Decimal(str(ticker["price"]))
+                price = self.binance.get_ticker_price(symbol)
+                prices[symbol] = price  # Already a Decimal
             except Exception as e:
                 app_logger.error(f"Failed to fetch price for {symbol}: {e}")
                 # Use last known price if available

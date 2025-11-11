@@ -9,11 +9,34 @@ Handles:
 
 from typing import List, Dict, Any
 from datetime import datetime
+from decimal import Decimal
 import json
 import asyncio
 from fastapi import WebSocket
 
 from src.utils.logger import app_logger
+
+
+def convert_decimals_to_float(obj: Any) -> Any:
+    """
+    Recursively convert Decimal objects to float for JSON serialization.
+
+    Args:
+        obj: Object to convert (dict, list, Decimal, or primitive)
+
+    Returns:
+        Object with all Decimals converted to floats
+    """
+    if isinstance(obj, Decimal):
+        return float(obj)
+    elif isinstance(obj, dict):
+        return {key: convert_decimals_to_float(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_decimals_to_float(item) for item in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_decimals_to_float(item) for item in obj)
+    else:
+        return obj
 
 
 class WebSocketManager:
@@ -85,7 +108,9 @@ class WebSocketManager:
             websocket: Target WebSocket connection
         """
         try:
-            await websocket.send_json(message)
+            # Convert Decimals to floats for JSON serialization
+            converted_message = convert_decimals_to_float(message)
+            await websocket.send_json(converted_message)
         except Exception as e:
             app_logger.error(f"Error sending personal message: {e}")
 
@@ -103,12 +128,15 @@ class WebSocketManager:
             f"Broadcasting message to {len(self.active_connections)} clients"
         )
 
+        # Convert Decimals to floats for JSON serialization
+        converted_message = convert_decimals_to_float(message)
+
         # Send to all connections
         disconnected = []
 
         for connection in self.active_connections:
             try:
-                await connection.send_json(message)
+                await connection.send_json(converted_message)
             except Exception as e:
                 app_logger.error(f"Error broadcasting to client: {e}")
                 disconnected.append(connection)

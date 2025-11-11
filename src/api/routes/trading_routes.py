@@ -106,11 +106,21 @@ async def get_all_accounts(
         all_accounts = service.get_all_accounts()
         summary = service.get_summary()
 
+        # Get current market prices
+        from src.api.dependencies import get_market_data_service
+        market_service = get_market_data_service()
+        current_prices = market_service.get_current_prices()
+
         accounts_list = []
         for llm_id, account in all_accounts.items():
-            # Get open positions
-            positions = [
-                PositionResponse(
+            # Get open positions with calculated PnL
+            positions = []
+            for pos in account.open_positions.values():
+                # Calculate PnL with current price
+                current_price = current_prices.get(pos.symbol, pos.entry_price)
+                pnl_data = pos.calculate_pnl(current_price)
+
+                positions.append(PositionResponse(
                     position_id=pos.position_id,
                     symbol=pos.symbol,
                     side=pos.side,
@@ -118,16 +128,14 @@ async def get_all_accounts(
                     quantity=float(pos.quantity),
                     leverage=pos.leverage,
                     margin_used=float(pos.margin_used),
-                    unrealized_pnl_usd=float(pos.unrealized_pnl_usd),
-                    unrealized_pnl_pct=float(pos.unrealized_pnl_pct),
-                    roi_pct=float(pos.roi_pct),
+                    unrealized_pnl_usd=float(pnl_data["unrealized_pnl_usd"]),
+                    unrealized_pnl_pct=float(pnl_data["unrealized_pnl_pct"]),
+                    roi_pct=float(pnl_data["roi_pct"]),
                     stop_loss_price=float(pos.stop_loss_price) if pos.stop_loss_price else None,
                     take_profit_price=float(pos.take_profit_price) if pos.take_profit_price else None,
                     liquidation_price=float(pos.liquidation_price),
                     opened_at=pos.opened_at
-                )
-                for pos in account.open_positions.values()
-            ]
+                ))
 
             accounts_list.append(AccountResponse(
                 llm_id=llm_id,

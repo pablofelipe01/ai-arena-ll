@@ -226,6 +226,35 @@ class SupabaseClient:
             app_logger.error(f"Error updating LLM stats for {llm_id}: {e}")
             raise DatabaseError(f"Failed to update LLM stats: {str(e)}")
 
+    def upsert_account(self, account_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Insert or update an LLM account (upsert based on llm_id).
+
+        Args:
+            account_data: Account data to upsert
+
+        Returns:
+            Upserted account
+        """
+        self._ensure_connected()
+
+        try:
+            # Use upsert with llm_id as unique key
+            response = self._client.table("llm_accounts").upsert(
+                account_data,
+                on_conflict="llm_id"
+            ).execute()
+
+            if response.data and len(response.data) > 0:
+                app_logger.debug(f"Upserted account: {account_data['llm_id']}")
+                return response.data[0]
+
+            raise DatabaseError("Failed to upsert account")
+
+        except APIError as e:
+            app_logger.error(f"Error upserting account: {e}")
+            raise DatabaseError(f"Failed to upsert account: {str(e)}")
+
     def increment_api_calls(self, llm_id: str, increment_hour: bool = True, increment_day: bool = True) -> None:
         """
         Incrementar contadores de llamadas API.
@@ -362,6 +391,66 @@ class SupabaseClient:
         except APIError as e:
             app_logger.error(f"Error updating position {position_id}: {e}")
             raise DatabaseError(f"Failed to update position: {str(e)}")
+
+    def upsert_position(self, position_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Insert or update a position (upsert based on position_id).
+
+        Args:
+            position_data: Position data to upsert
+
+        Returns:
+            Upserted position
+        """
+        self._ensure_connected()
+
+        try:
+            # Use upsert with position_id as unique key
+            response = self._client.table("positions").upsert(
+                position_data,
+                on_conflict="position_id"
+            ).execute()
+
+            if response.data and len(response.data) > 0:
+                app_logger.debug(f"Upserted position: {position_data['position_id']}")
+                return response.data[0]
+
+            raise DatabaseError("Failed to upsert position")
+
+        except APIError as e:
+            app_logger.error(f"Error upserting position: {e}")
+            raise DatabaseError(f"Failed to upsert position: {str(e)}")
+
+    def update_position_status(self, position_id: str, status: str) -> Dict[str, Any]:
+        """
+        Update position status.
+
+        Args:
+            position_id: Position identifier
+            status: New status (OPEN, CLOSED, LIQUIDATED)
+
+        Returns:
+            Updated position
+        """
+        self._ensure_connected()
+
+        try:
+            update_data = {"status": status}
+
+            if status in ["CLOSED", "LIQUIDATED"]:
+                update_data["closed_at"] = datetime.now().isoformat()
+
+            response = self._client.table("positions").update(update_data).eq("position_id", position_id).execute()
+
+            if response.data and len(response.data) > 0:
+                app_logger.debug(f"Updated position {position_id} status to {status}")
+                return response.data[0]
+
+            raise DatabaseError(f"Position {position_id} not found")
+
+        except APIError as e:
+            app_logger.error(f"Error updating position status: {e}")
+            raise DatabaseError(f"Failed to update position status: {str(e)}")
 
     def close_position(
         self,
@@ -607,6 +696,35 @@ class SupabaseClient:
         except APIError as e:
             app_logger.error(f"Error logging rejected decision: {e}")
             raise DatabaseError(f"Failed to log rejected decision: {str(e)}")
+
+    # ============================================
+    # LLM DECISIONS
+    # ============================================
+
+    def insert_llm_decision(self, decision_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Insert an LLM trading decision into the database.
+
+        Args:
+            decision_data: Decision data to insert
+
+        Returns:
+            Inserted decision record
+        """
+        self._ensure_connected()
+
+        try:
+            response = self._client.table("llm_decisions").insert(decision_data).execute()
+
+            if response.data and len(response.data) > 0:
+                app_logger.debug(f"Inserted LLM decision: {decision_data.get('llm_id', 'UNKNOWN')}")
+                return response.data[0]
+
+            raise DatabaseError("Failed to insert LLM decision")
+
+        except APIError as e:
+            app_logger.error(f"Error inserting LLM decision: {e}")
+            raise DatabaseError(f"Failed to insert LLM decision: {str(e)}")
 
     # ============================================
     # LLM API CALLS

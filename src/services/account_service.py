@@ -13,6 +13,7 @@ from datetime import datetime
 
 from src.core.llm_account import LLMAccount, Position, Trade
 from src.database.supabase_client import SupabaseClient
+from src.clients.binance_client import BinanceClient
 from src.utils.logger import app_logger
 
 
@@ -27,6 +28,7 @@ class AccountService:
     def __init__(
         self,
         supabase_client: SupabaseClient,
+        binance_client: Optional[BinanceClient] = None,
         initial_balance: Decimal = Decimal("100.00")
     ):
         """
@@ -34,9 +36,11 @@ class AccountService:
 
         Args:
             supabase_client: Supabase database client
+            binance_client: Binance client for syncing real positions (optional)
             initial_balance: Initial balance for each LLM account
         """
         self.db = supabase_client
+        self.binance = binance_client
         self.initial_balance = initial_balance
 
         # Initialize 3 LLM accounts
@@ -83,21 +87,52 @@ class AccountService:
         account = self.get_account(llm_id)
 
         try:
-            # Upsert account state
+            # Get LLM configuration from settings
+            from config.settings import settings
+
+            # Map LLM ID to config
+            llm_config_map = {
+                "LLM-A": {
+                    "provider": settings.LLM_A_PROVIDER,
+                    "model": settings.LLM_A_MODEL,
+                    "temperature": settings.LLM_A_TEMPERATURE,
+                    "max_tokens": settings.LLM_A_MAX_TOKENS
+                },
+                "LLM-B": {
+                    "provider": settings.LLM_B_PROVIDER,
+                    "model": settings.LLM_B_MODEL,
+                    "temperature": settings.LLM_B_TEMPERATURE,
+                    "max_tokens": settings.LLM_B_MAX_TOKENS
+                },
+                "LLM-C": {
+                    "provider": settings.LLM_C_PROVIDER,
+                    "model": settings.LLM_C_MODEL,
+                    "temperature": settings.LLM_C_TEMPERATURE,
+                    "max_tokens": settings.LLM_C_MAX_TOKENS
+                }
+            }
+
+            llm_config = llm_config_map.get(llm_id, {})
+
+            # Upsert account state (using correct Supabase column names)
             account_data = {
                 "llm_id": llm_id,
-                "balance_usdt": float(account.balance_usdt),
+                "provider": llm_config.get("provider", "unknown"),
+                "model": llm_config.get("model", "unknown"),
+                "temperature": float(llm_config.get("temperature", 0.7)),
+                "max_tokens": llm_config.get("max_tokens", 1000),
+                "balance": float(account.balance_usdt),
                 "margin_used": float(account.margin_used),
                 "unrealized_pnl": float(account.unrealized_pnl),
-                "equity_usdt": float(account.equity_usdt),
+                "total_pnl": float(account.total_realized_pnl + account.unrealized_pnl),
                 "total_trades": account.total_trades,
                 "winning_trades": account.winning_trades,
                 "losing_trades": account.losing_trades,
-                "total_realized_pnl": float(account.total_realized_pnl),
+                "realized_pnl": float(account.total_realized_pnl),
                 "updated_at": datetime.utcnow().isoformat()
             }
 
-            self.db.upsert_llm_account(account_data)
+            self.db.upsert_account(account_data)
 
             app_logger.debug(f"Synced {llm_id} account to database")
 
@@ -209,15 +244,33 @@ class AccountService:
         Get all open positions across all LLMs.
 
         Returns:
-            Dict of llm_id -> list of positions
+            Dict of llm_id -> list of positions with calculated PnL
         """
+        from src.api.dependencies import get_market_data_service
+
+        # Get current market prices
+        market_service = get_market_data_service()
+        current_prices = market_service.get_current_prices()
+
         all_positions = {}
 
         for llm_id, account in self.accounts.items():
-            positions = [
-                pos.to_dict()
-                for pos in account.open_positions.values()
-            ]
+            positions = []
+            for pos in account.open_positions.values():
+                # Get position dict
+                pos_dict = pos.to_dict()
+
+                # Calculate PnL with current price
+                current_price = current_prices.get(pos.symbol, pos.entry_price)
+                pnl_data = pos.calculate_pnl(current_price)
+
+                # Add PnL fields
+                pos_dict["unrealized_pnl_usd"] = float(pnl_data["unrealized_pnl_usd"])
+                pos_dict["unrealized_pnl_pct"] = float(pnl_data["unrealized_pnl_pct"])
+                pos_dict["roi_pct"] = float(pnl_data["roi_pct"])
+
+                positions.append(pos_dict)
+
             all_positions[llm_id] = positions
 
         return all_positions
@@ -286,6 +339,212 @@ class AccountService:
             "active_llms": len(self.accounts),
             "leaderboard": self.get_leaderboard()
         }
+
+    def sync_from_binance(self, current_prices: Dict[str, Decimal]) -> Dict[str, Any]:
+        """
+        Sync all accounts with real positions from Binance.
+
+        This method:
+        1. Fetches real positions from Binance
+        2. Updates virtual accounts to match reality
+        3. Syncs to database
+
+        Args:
+            current_prices: Current market prices for PnL calculation
+
+        Returns:
+            Dict with sync results
+        """
+        if not self.binance:
+            app_logger.warning("Cannot sync from Binance: client not available")
+            return {
+                "success": False,
+                "message": "Binance client not configured"
+            }
+
+        try:
+            app_logger.info("Syncing accounts from Binance...")
+
+            # Get all real positions from Binance WITH clientOrderIds
+            binance_positions = self.binance.get_open_positions_with_client_ids()
+
+            # Group positions by LLM (parsed from clientOrderId)
+            positions_by_llm = {}
+            for pos in binance_positions:
+                # Parse clientOrderId to get LLM owner
+                # Format: LLM-A_BTCUSDT_1234567890
+                client_order_id = pos.get("clientOrderId")
+                llm_owner = None
+
+                if client_order_id:
+                    parts = client_order_id.split("_")
+                    if len(parts) >= 1 and parts[0] in self.accounts:
+                        llm_owner = parts[0]
+
+                # If we can't determine owner, skip this position
+                if not llm_owner:
+                    app_logger.warning(
+                        f"Cannot determine LLM owner for {pos['symbol']} "
+                        f"(clientOrderId: {client_order_id}), skipping..."
+                    )
+                    continue
+
+                if llm_owner not in positions_by_llm:
+                    positions_by_llm[llm_owner] = []
+
+                positions_by_llm[llm_owner].append(pos)
+
+            sync_stats = {
+                "positions_synced": 0,
+                "positions_added": 0,
+                "positions_removed": 0,
+                "positions_updated": 0,
+                "by_llm": {}
+            }
+
+            # Sync each LLM account
+            for llm_id in self.accounts.keys():
+                account = self.get_account(llm_id)
+                real_positions_for_llm = positions_by_llm.get(llm_id, [])
+
+                # Convert to dict keyed by symbol for easy lookup
+                real_positions_by_symbol = {
+                    pos["symbol"]: pos
+                    for pos in real_positions_for_llm
+                }
+
+                llm_stats = {
+                    "positions_synced": 0,
+                    "positions_added": 0,
+                    "positions_removed": 0,
+                    "positions_updated": 0
+                }
+
+                # Track which virtual positions we've seen
+                virtual_symbols = set(pos.symbol for pos in account.open_positions.values())
+                real_symbols = set(real_positions_by_symbol.keys())
+
+                # Update existing positions with real data
+                for position in list(account.open_positions.values()):
+                    symbol = position.symbol
+
+                    if symbol in real_positions_by_symbol:
+                        real_pos = real_positions_by_symbol[symbol]
+                        real_quantity = abs(Decimal(real_pos["positionAmt"]))
+                        real_entry = Decimal(real_pos["entryPrice"])
+                        real_leverage = int(real_pos["leverage"])
+
+                        # Update position with real data
+                        position.quantity = real_quantity
+                        position.entry_price = real_entry
+                        position.leverage = real_leverage
+
+                        # Recalculate margin
+                        position.margin_used = (real_quantity * real_entry) / Decimal(str(real_leverage))
+
+                        # Update PnL
+                        if symbol in current_prices:
+                            pnl_data = position.calculate_pnl(current_prices[symbol])
+                            position.unrealized_pnl_usd = pnl_data["unrealized_pnl_usd"]
+                            position.unrealized_pnl_pct = pnl_data["unrealized_pnl_pct"]
+                            position.roi_pct = pnl_data["roi_pct"]
+
+                        llm_stats["positions_updated"] += 1
+                        sync_stats["positions_updated"] += 1
+                        app_logger.info(
+                            f"[{llm_id}] Updated {symbol}: {real_quantity} @ ${real_entry}"
+                        )
+
+                    else:
+                        # Position closed in Binance but still open in virtual account
+                        # Close it with current price
+                        exit_price = current_prices.get(symbol, position.entry_price)
+                        account.close_position(
+                            position_id=position.position_id,
+                            exit_price=exit_price,
+                            exit_reason="SYNC_CLOSED"
+                        )
+                        llm_stats["positions_removed"] += 1
+                        sync_stats["positions_removed"] += 1
+                        app_logger.info(f"[{llm_id}] Closed virtual position {symbol} (not in Binance)")
+
+                # Add positions that exist in Binance but not in virtual account
+                for symbol, real_pos in real_positions_by_symbol.items():
+                    if symbol not in virtual_symbols:
+                        # New position found in Binance
+                        real_quantity = abs(Decimal(real_pos["positionAmt"]))
+                        real_entry = Decimal(real_pos["entryPrice"])
+                        real_leverage = int(real_pos["leverage"])
+                        position_amt = Decimal(real_pos["positionAmt"])
+
+                        # Determine side
+                        side = "LONG" if position_amt > 0 else "SHORT"
+
+                        # Calculate position size in USD
+                        quantity_usd = real_quantity * real_entry
+
+                        # Create position in virtual account
+                        try:
+                            new_position = account.open_position(
+                                symbol=symbol,
+                                side=side,
+                                entry_price=real_entry,
+                                quantity_usd=quantity_usd,
+                                leverage=real_leverage
+                            )
+
+                            # Update with exact quantity from Binance
+                            new_position.quantity = real_quantity
+
+                            llm_stats["positions_added"] += 1
+                            sync_stats["positions_added"] += 1
+                            app_logger.info(
+                                f"[{llm_id}] Added position from Binance: {symbol} {side} "
+                                f"{real_quantity} @ ${real_entry}"
+                            )
+                        except Exception as e:
+                            app_logger.error(f"[{llm_id}] Failed to add position {symbol}: {e}")
+
+                # Recalculate account totals
+                account.update_unrealized_pnl(current_prices)
+
+                # Sync to database
+                self.sync_account_to_db(llm_id)
+
+                # Sync all positions to DB
+                for position in account.open_positions.values():
+                    self.sync_position_to_db(llm_id, position)
+
+                llm_stats["positions_synced"] = len(account.open_positions)
+                sync_stats["positions_synced"] += len(account.open_positions)
+                sync_stats["by_llm"][llm_id] = llm_stats
+
+            app_logger.info(
+                f"Binance sync complete: {sync_stats['positions_synced']} total positions, "
+                f"{sync_stats['positions_added']} added, "
+                f"{sync_stats['positions_updated']} updated, "
+                f"{sync_stats['positions_removed']} removed"
+            )
+
+            # Log per-LLM stats
+            for llm_id, llm_stats in sync_stats["by_llm"].items():
+                app_logger.info(
+                    f"  [{llm_id}]: {llm_stats['positions_synced']} positions "
+                    f"(+{llm_stats['positions_added']} ~{llm_stats['positions_updated']} "
+                    f"-{llm_stats['positions_removed']})"
+                )
+
+            return {
+                "success": True,
+                "stats": sync_stats
+            }
+
+        except Exception as e:
+            app_logger.error(f"Failed to sync from Binance: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
     def reset_account(self, llm_id: str) -> None:
         """

@@ -129,7 +129,7 @@ async def send_initial_data(
         # Get current market snapshot
         market_snapshot = trading_service.market_data.get_market_snapshot()
 
-        # Send market data
+        # Send market data (convert all Decimals to floats)
         await ws_manager.send_personal_message(
             {
                 "type": "market_snapshot",
@@ -142,7 +142,12 @@ async def send_initial_data(
                         }
                         for symbol, data in market_snapshot["symbols"].items()
                     },
-                    "summary": market_snapshot["summary"]
+                    "summary": {
+                        "total_symbols": market_snapshot["summary"]["total_symbols"],
+                        "gainers": market_snapshot["summary"]["gainers"],
+                        "losers": market_snapshot["summary"]["losers"],
+                        "total_volume_usdt": float(market_snapshot["summary"]["total_volume_usdt"])
+                    }
                 },
                 "timestamp": datetime.utcnow().isoformat()
             },
@@ -216,6 +221,7 @@ async def handle_client_message(
         elif msg_type == "get_market":
             # Send current market data
             market_snapshot = trading_service.market_data.get_market_snapshot()
+            # Convert Decimals to floats (done automatically by send_personal_message now)
             await ws_manager.send_personal_message(
                 {
                     "type": "market_snapshot",
