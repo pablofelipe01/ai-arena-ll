@@ -46,12 +46,20 @@ def get_binance_client() -> BinanceClient:
     global _binance_client
     if _binance_client is None:
         app_logger.info("Initializing Binance client...")
+        # Use testnet or production credentials based on settings
+        if settings.USE_TESTNET:
+            api_key = settings.BINANCE_TESTNET_API_KEY
+            api_secret = settings.BINANCE_TESTNET_SECRET_KEY
+        else:
+            api_key = settings.BINANCE_API_KEY
+            api_secret = settings.BINANCE_SECRET_KEY
+
         _binance_client = BinanceClient(
-            api_key=settings.BINANCE_API_KEY,
-            api_secret=settings.BINANCE_API_SECRET,
-            testnet=settings.BINANCE_TESTNET
+            api_key=api_key,
+            api_secret=api_secret,
+            testnet=settings.USE_TESTNET
         )
-        app_logger.info("Binance client initialized")
+        app_logger.info(f"Binance client initialized (testnet={settings.USE_TESTNET})")
     return _binance_client
 
 
@@ -60,10 +68,8 @@ def get_supabase_client() -> SupabaseClient:
     global _supabase_client
     if _supabase_client is None:
         app_logger.info("Initializing Supabase client...")
-        _supabase_client = SupabaseClient(
-            url=settings.SUPABASE_URL,
-            key=settings.SUPABASE_KEY
-        )
+        _supabase_client = SupabaseClient()
+        _supabase_client.connect()
         app_logger.info("Supabase client initialized")
     return _supabase_client
 
@@ -75,19 +81,25 @@ def get_llm_clients() -> Dict[str, BaseLLMClient]:
         app_logger.info("Initializing LLM clients...")
         _llm_clients = {
             "LLM-A": ClaudeClient(
-                api_key=settings.ANTHROPIC_API_KEY,
                 llm_id="LLM-A",
-                personality="conservative"
+                model=settings.LLM_A_MODEL,
+                api_key=settings.CLAUDE_API_KEY,
+                temperature=settings.LLM_A_TEMPERATURE,
+                max_tokens=settings.LLM_A_MAX_TOKENS
             ),
             "LLM-B": DeepSeekClient(
-                api_key=settings.DEEPSEEK_API_KEY,
                 llm_id="LLM-B",
-                personality="balanced"
+                model=settings.LLM_B_MODEL,
+                api_key=settings.DEEPSEEK_API_KEY,
+                temperature=settings.LLM_B_TEMPERATURE,
+                max_tokens=settings.LLM_B_MAX_TOKENS
             ),
             "LLM-C": OpenAIClient(
-                api_key=settings.OPENAI_API_KEY,
                 llm_id="LLM-C",
-                personality="aggressive"
+                model=settings.LLM_C_MODEL,
+                api_key=settings.OPENAI_API_KEY,
+                temperature=settings.LLM_C_TEMPERATURE,
+                max_tokens=settings.LLM_C_MAX_TOKENS
             )
         }
         app_logger.info(f"Initialized {len(_llm_clients)} LLM clients")
@@ -127,7 +139,7 @@ def get_account_service() -> AccountService:
         supabase = get_supabase_client()
         _account_service = AccountService(
             supabase_client=supabase,
-            initial_balance=Decimal(str(settings.INITIAL_BALANCE_USDT))
+            initial_balance=Decimal(str(settings.INITIAL_BALANCE_PER_LLM))
         )
         app_logger.info("AccountService initialized")
     return _account_service
