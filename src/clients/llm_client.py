@@ -12,6 +12,7 @@ import time
 from src.utils.logger import app_logger
 from src.utils.exceptions import LLMAPIError, LLMTimeoutError, LLMResponseParseError
 from src.clients.prompts import build_trading_prompt, parse_llm_response
+from src.clients.grid_prompts import build_grid_trading_prompt, parse_grid_decision
 
 
 class BaseLLMClient(ABC):
@@ -170,6 +171,96 @@ class BaseLLMClient(ABC):
         except Exception as e:
             # Catch any other unexpected errors
             app_logger.error(f"{self.llm_id}: Unexpected error getting decision: {e}")
+            raise LLMAPIError(
+                llm_id=self.llm_id,
+                message=f"Unexpected error: {str(e)}",
+                provider=self.provider
+            )
+
+    def get_grid_decision(
+        self,
+        account_info: Dict[str, Any],
+        market_data: List[Dict[str, Any]],
+        active_grids: List[Dict[str, Any]],
+        recent_performance: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Get grid trading decision from LLM.
+
+        Args:
+            account_info: Account information
+            market_data: Current market data for all symbols
+            active_grids: Currently active grids
+            recent_performance: Recent grid performance metrics
+
+        Returns:
+            Dict with parsed grid decision and metadata
+
+        Raises:
+            LLMAPIError: If API call fails
+            LLMResponseParseError: If response cannot be parsed
+        """
+        start_time = time.time()
+
+        try:
+            # Build grid trading prompt
+            full_prompt = build_grid_trading_prompt(
+                llm_id=self.llm_id,
+                account_info=account_info,
+                market_data=market_data,
+                active_grids=active_grids,
+                recent_performance=recent_performance
+            )
+
+            # Make API call
+            app_logger.info(f"{self.llm_id}: Requesting grid trading decision from {self.provider}")
+
+            response_text, metadata = self._make_api_call(
+                system_prompt="",
+                user_prompt=full_prompt
+            )
+
+            # Parse response
+            try:
+                decision = parse_grid_decision(response_text)
+            except ValueError as e:
+                app_logger.error(f"{self.llm_id}: Failed to parse grid decision: {e}")
+                raise LLMResponseParseError(
+                    llm_id=self.llm_id,
+                    provider=self.provider,
+                    raw_response=response_text,
+                    error=str(e)
+                )
+
+            # Calculate response time
+            response_time_ms = int((time.time() - start_time) * 1000)
+
+            # Build result
+            result = {
+                "decision": decision,
+                "raw_response": response_text,
+                "response_time_ms": response_time_ms,
+                **metadata
+            }
+
+            app_logger.info(
+                f"{self.llm_id}: Grid decision received - "
+                f"Action: {decision['action']}, "
+                f"Symbol: {decision.get('symbol', 'N/A')}, "
+                f"Market: {decision['market_analysis']['condition']}, "
+                f"Confidence: {decision['confidence']}, "
+                f"Time: {response_time_ms}ms"
+            )
+
+            return result
+
+        except (LLMAPIError, LLMTimeoutError, LLMResponseParseError):
+            # Re-raise these specific exceptions
+            raise
+
+        except Exception as e:
+            # Catch any other unexpected errors
+            app_logger.error(f"{self.llm_id}: Unexpected error getting grid decision: {e}")
             raise LLMAPIError(
                 llm_id=self.llm_id,
                 message=f"Unexpected error: {str(e)}",

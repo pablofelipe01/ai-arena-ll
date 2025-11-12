@@ -398,6 +398,353 @@ class TradeExecutor:
 
         app_logger.info(f"Binance position closed: {order}")
 
+    # ==================== GRID TRADING METHODS ====================
+
+    def place_grid_orders(
+        self,
+        grid_instance: Any,
+        llm_id: str
+    ) -> Dict[str, Any]:
+        """
+        Place all grid orders (buy and sell limit orders) for a grid.
+
+        Args:
+            grid_instance: GridInstance from grid_engine
+            llm_id: LLM identifier
+
+        Returns:
+            Dict with placement results
+        """
+        symbol = grid_instance.config.symbol
+        leverage = grid_instance.config.leverage
+
+        app_logger.info(
+            f"[{llm_id}] Placing grid orders for {symbol}: "
+            f"{len(grid_instance.buy_levels)} buy, {len(grid_instance.sell_levels)} sell"
+        )
+
+        placed_orders = []
+        failed_orders = []
+
+        # Set leverage
+        try:
+            if not self.simulate:
+                self.binance.set_leverage(symbol, leverage)
+        except Exception as e:
+            app_logger.error(f"[{llm_id}] Failed to set leverage for {symbol}: {e}")
+            return {
+                "status": "ERROR",
+                "message": f"Failed to set leverage: {e}",
+                "placed": [],
+                "failed": []
+            }
+
+        # Place buy orders
+        for level in grid_instance.buy_levels:
+            try:
+                if not self.simulate:
+                    # Round quantity and price
+                    quantity = self.binance.round_step_size(symbol, level.quantity)
+                    price = self.binance.round_tick_size(symbol, level.price)
+
+                    # Place limit order
+                    order = self.binance.create_limit_order(
+                        symbol=symbol,
+                        side="BUY",
+                        quantity=quantity,
+                        price=price,
+                        newClientOrderId=level.level_id
+                    )
+
+                    level.order_id = order.get("orderId")
+                    placed_orders.append({
+                        "level_id": level.level_id,
+                        "order_id": level.order_id,
+                        "side": "BUY",
+                        "price": float(price),
+                        "quantity": float(quantity)
+                    })
+
+                    app_logger.debug(
+                        f"[{llm_id}] Placed BUY order: {level.level_id} @ ${price}"
+                    )
+                else:
+                    # Simulate
+                    level.order_id = f"SIM_{level.level_id}"
+                    placed_orders.append({
+                        "level_id": level.level_id,
+                        "order_id": level.order_id,
+                        "side": "BUY",
+                        "price": float(level.price),
+                        "quantity": float(level.quantity)
+                    })
+
+            except Exception as e:
+                app_logger.error(f"[{llm_id}] Failed to place BUY order {level.level_id}: {e}")
+                failed_orders.append({
+                    "level_id": level.level_id,
+                    "side": "BUY",
+                    "error": str(e)
+                })
+
+        # Place sell orders
+        for level in grid_instance.sell_levels:
+            try:
+                if not self.simulate:
+                    # Round quantity and price
+                    quantity = self.binance.round_step_size(symbol, level.quantity)
+                    price = self.binance.round_tick_size(symbol, level.price)
+
+                    # Place limit order
+                    order = self.binance.create_limit_order(
+                        symbol=symbol,
+                        side="SELL",
+                        quantity=quantity,
+                        price=price,
+                        newClientOrderId=level.level_id
+                    )
+
+                    level.order_id = order.get("orderId")
+                    placed_orders.append({
+                        "level_id": level.level_id,
+                        "order_id": level.order_id,
+                        "side": "SELL",
+                        "price": float(price),
+                        "quantity": float(quantity)
+                    })
+
+                    app_logger.debug(
+                        f"[{llm_id}] Placed SELL order: {level.level_id} @ ${price}"
+                    )
+                else:
+                    # Simulate
+                    level.order_id = f"SIM_{level.level_id}"
+                    placed_orders.append({
+                        "level_id": level.level_id,
+                        "order_id": level.order_id,
+                        "side": "SELL",
+                        "price": float(level.price),
+                        "quantity": float(level.quantity)
+                    })
+
+            except Exception as e:
+                app_logger.error(f"[{llm_id}] Failed to place SELL order {level.level_id}: {e}")
+                failed_orders.append({
+                    "level_id": level.level_id,
+                    "side": "SELL",
+                    "error": str(e)
+                })
+
+        app_logger.info(
+            f"[{llm_id}] Grid orders placed: {len(placed_orders)} success, {len(failed_orders)} failed"
+        )
+
+        return {
+            "status": "SUCCESS" if len(placed_orders) > 0 else "ERROR",
+            "message": f"Placed {len(placed_orders)} orders, {len(failed_orders)} failed",
+            "placed": placed_orders,
+            "failed": failed_orders
+        }
+
+    def monitor_grid_orders(
+        self,
+        grid_instance: Any,
+        llm_id: str
+    ) -> Dict[str, Any]:
+        """
+        Monitor grid orders and update filled levels.
+
+        Args:
+            grid_instance: GridInstance from grid_engine
+            llm_id: LLM identifier
+
+        Returns:
+            Dict with monitoring results (filled orders, cycles detected)
+        """
+        symbol = grid_instance.config.symbol
+        filled_orders = []
+        cycles_detected = []
+
+        # Get pending orders
+        pending_levels = grid_instance.get_pending_orders()
+
+        if not pending_levels:
+            return {
+                "filled_orders": [],
+                "cycles_detected": [],
+                "message": "No pending orders to monitor"
+            }
+
+        # Check order status on Binance
+        for level in pending_levels:
+            try:
+                if not self.simulate and level.order_id:
+                    # Query order status
+                    order = self.binance.get_order(symbol, level.order_id)
+
+                    if order["status"] == "FILLED":
+                        # Mark level as filled
+                        filled_price = Decimal(str(order["avgPrice"]))
+                        filled_at = datetime.utcnow()
+
+                        grid_instance.mark_level_filled(
+                            level_id=level.level_id,
+                            order_id=level.order_id,
+                            filled_price=filled_price,
+                            filled_at=filled_at
+                        )
+
+                        filled_orders.append({
+                            "level_id": level.level_id,
+                            "side": level.side,
+                            "price": float(filled_price),
+                            "quantity": float(level.quantity),
+                            "filled_at": filled_at.isoformat()
+                        })
+
+                        app_logger.info(
+                            f"[{llm_id}] Grid order filled: {level.side} @ ${filled_price}"
+                        )
+
+            except Exception as e:
+                app_logger.error(
+                    f"[{llm_id}] Failed to check order status for {level.level_id}: {e}"
+                )
+
+        # Detect completed cycles (buy + sell fills at adjacent levels)
+        cycles_detected = self._detect_grid_cycles(grid_instance, llm_id)
+
+        return {
+            "filled_orders": filled_orders,
+            "cycles_detected": cycles_detected,
+            "message": f"{len(filled_orders)} fills, {len(cycles_detected)} cycles"
+        }
+
+    def _detect_grid_cycles(
+        self,
+        grid_instance: Any,
+        llm_id: str
+    ) -> list[Dict[str, Any]]:
+        """
+        Detect completed grid cycles (buy filled -> sell filled).
+
+        A cycle is complete when:
+        1. A buy order is filled
+        2. The corresponding sell order above it is filled
+
+        Args:
+            grid_instance: GridInstance
+            llm_id: LLM identifier
+
+        Returns:
+            List of detected cycles
+        """
+        cycles = []
+        filled_buys = [level for level in grid_instance.buy_levels if level.status == "FILLED"]
+        filled_sells = [level for level in grid_instance.sell_levels if level.status == "FILLED"]
+
+        # Match buy-sell pairs
+        for buy_level in filled_buys:
+            # Find corresponding sell level (next price above buy)
+            matching_sells = [
+                sell for sell in filled_sells
+                if sell.price > buy_level.price and sell.status == "FILLED"
+            ]
+
+            if matching_sells:
+                # Take the closest sell above the buy
+                sell_level = min(matching_sells, key=lambda s: s.price)
+
+                # Calculate profit
+                buy_price = buy_level.filled_price or buy_level.price
+                sell_price = sell_level.filled_price or sell_level.price
+                quantity = buy_level.quantity  # Assuming same quantity
+
+                gross, fees, net = grid_instance.calculate_cycle_profit(
+                    buy_price=buy_price,
+                    sell_price=sell_price,
+                    quantity=quantity
+                )
+
+                # Record cycle
+                grid_instance.record_completed_cycle(
+                    buy_price=buy_price,
+                    sell_price=sell_price,
+                    quantity=quantity
+                )
+
+                cycles.append({
+                    "buy_level_id": buy_level.level_id,
+                    "sell_level_id": sell_level.level_id,
+                    "buy_price": float(buy_price),
+                    "sell_price": float(sell_price),
+                    "quantity": float(quantity),
+                    "gross_profit": float(gross),
+                    "fees": float(fees),
+                    "net_profit": float(net)
+                })
+
+                app_logger.info(
+                    f"[{llm_id}] Grid cycle #{grid_instance.cycles_completed}: "
+                    f"Buy @ ${buy_price}, Sell @ ${sell_price}, "
+                    f"Net profit: ${net:.4f}"
+                )
+
+                # Reset levels to PENDING for next cycle
+                buy_level.status = "PENDING"
+                sell_level.status = "PENDING"
+
+        return cycles
+
+    def cancel_grid_orders(
+        self,
+        grid_instance: Any,
+        llm_id: str
+    ) -> Dict[str, Any]:
+        """
+        Cancel all pending grid orders.
+
+        Args:
+            grid_instance: GridInstance
+            llm_id: LLM identifier
+
+        Returns:
+            Cancellation results
+        """
+        symbol = grid_instance.config.symbol
+        pending_orders = grid_instance.get_pending_orders()
+
+        cancelled = []
+        failed = []
+
+        app_logger.info(
+            f"[{llm_id}] Cancelling {len(pending_orders)} pending grid orders for {symbol}"
+        )
+
+        for level in pending_orders:
+            try:
+                if not self.simulate and level.order_id:
+                    self.binance.cancel_order(symbol, level.order_id)
+
+                level.status = "CANCELLED"
+                cancelled.append(level.level_id)
+
+                app_logger.debug(f"[{llm_id}] Cancelled order: {level.level_id}")
+
+            except Exception as e:
+                app_logger.error(f"[{llm_id}] Failed to cancel order {level.level_id}: {e}")
+                failed.append({
+                    "level_id": level.level_id,
+                    "error": str(e)
+                })
+
+        return {
+            "status": "SUCCESS" if len(cancelled) > 0 else "ERROR",
+            "cancelled": cancelled,
+            "failed": failed,
+            "message": f"Cancelled {len(cancelled)} orders, {len(failed)} failed"
+        }
+
     def __repr__(self) -> str:
         """String representation."""
         return f"<TradeExecutor simulate={self.simulate}>"

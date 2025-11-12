@@ -3,10 +3,11 @@ Trading Service - Orchestrates the complete trading flow.
 
 Main workflow:
 1. Fetch market data and calculate indicators
-2. Get trading decisions from each LLM
-3. Validate and execute decisions
-4. Update accounts and sync to database
-5. Handle automatic triggers (stop loss/take profit)
+2. Get grid trading decisions from each LLM
+3. Execute grid actions (setup/update/stop grids)
+4. Monitor grid cycles and track performance
+5. Update accounts and sync to database
+6. Handle automatic triggers (stop loss/take profit)
 """
 
 from typing import Dict, List, Any, Optional
@@ -18,6 +19,7 @@ from src.services.indicator_service import IndicatorService
 from src.services.account_service import AccountService
 from src.core.risk_manager import RiskManager
 from src.core.trade_executor import TradeExecutor
+from src.core.grid_engine import GridEngine, GridConfig
 from src.clients.llm_client import BaseLLMClient
 from src.database.supabase_client import SupabaseClient
 from src.utils.logger import app_logger
@@ -63,8 +65,11 @@ class TradingService:
         self.llm_clients = llm_clients
         self.db = supabase_client
 
+        # Initialize Grid Trading Engine
+        self.grid_engine = GridEngine()
+
         app_logger.info(
-            f"TradingService initialized with {len(llm_clients)} LLM clients"
+            f"TradingService initialized with {len(llm_clients)} LLM clients and Grid Engine"
         )
 
     def execute_trading_cycle(self) -> Dict[str, Any]:
@@ -112,9 +117,13 @@ class TradingService:
             app_logger.info("Step 4: Checking automatic triggers...")
             trigger_results = self._handle_automatic_triggers(current_prices)
 
-            # Step 5: Get LLM decisions and execute
-            app_logger.info("Step 5: Getting LLM decisions...")
-            decision_results = self._process_llm_decisions(
+            # Step 4.5: Monitor active grids for filled orders and completed cycles
+            app_logger.info("Step 4.5: Monitoring active grids...")
+            grid_monitoring_results = self._monitor_active_grids()
+
+            # Step 5: Get grid trading decisions from LLMs and execute
+            app_logger.info("Step 5: Getting grid trading decisions from LLMs...")
+            decision_results = self._process_grid_decisions(
                 current_prices,
                 all_indicators
             )
@@ -149,6 +158,12 @@ class TradingService:
                     "take_profit_count": len(trigger_results.get("take_profit", [])),
                     "results": trigger_results
                 },
+                "grid_monitoring": {
+                    "total_fills": grid_monitoring_results.get("total_fills", 0),
+                    "total_cycles": grid_monitoring_results.get("total_cycles", 0),
+                    "per_llm": grid_monitoring_results.get("per_llm", {})
+                },
+                "grid_stats": self.grid_engine.get_performance_summary(),
                 "decisions": decision_results,
                 "accounts": self.accounts.get_leaderboard(),
                 "summary": self.accounts.get_summary()
@@ -219,13 +234,411 @@ class TradingService:
 
         return results
 
-    def _process_llm_decisions(
+    def _monitor_active_grids(self) -> Dict[str, Any]:
+        """
+        Monitor all active grids for filled orders and completed cycles.
+
+        Returns:
+            Dict with monitoring results per LLM
+        """
+        monitoring_results = {}
+        total_fills = 0
+        total_cycles = 0
+
+        active_grids = self.grid_engine.get_all_active_grids()
+
+        for grid in active_grids:
+            try:
+                # Monitor this grid
+                result = self.executor.monitor_grid_orders(grid, grid.llm_id)
+
+                fills = len(result["filled_orders"])
+                cycles = len(result["cycles_detected"])
+
+                total_fills += fills
+                total_cycles += cycles
+
+                if fills > 0 or cycles > 0:
+                    app_logger.info(
+                        f"[{grid.llm_id}] Grid {grid.config.symbol}: "
+                        f"{fills} fills, {cycles} cycles completed"
+                    )
+
+                    # Store result
+                    if grid.llm_id not in monitoring_results:
+                        monitoring_results[grid.llm_id] = []
+
+                    monitoring_results[grid.llm_id].append({
+                        "grid_id": grid.grid_id,
+                        "symbol": grid.config.symbol,
+                        "fills": fills,
+                        "cycles": cycles,
+                        "total_cycles": grid.cycles_completed,
+                        "total_profit": float(grid.total_profit_usdt)
+                    })
+
+            except Exception as e:
+                app_logger.error(
+                    f"[{grid.llm_id}] Failed to monitor grid {grid.grid_id}: {e}",
+                    exc_info=True
+                )
+
+        if total_fills > 0 or total_cycles > 0:
+            app_logger.info(
+                f"Grid monitoring complete: {total_fills} total fills, "
+                f"{total_cycles} total cycles across all LLMs"
+            )
+
+        return {
+            "total_fills": total_fills,
+            "total_cycles": total_cycles,
+            "per_llm": monitoring_results
+        }
+
+    def _process_grid_decisions(
         self,
         current_prices: Dict[str, Decimal],
         indicators: Dict[str, Dict[str, Any]]
     ) -> Dict[str, Any]:
         """
-        Get decisions from all LLMs and execute them.
+        Get grid trading decisions from all LLMs and execute them.
+
+        Args:
+            current_prices: Current market prices
+            indicators: Technical indicators
+
+        Returns:
+            Dict with grid decision results per LLM
+        """
+        decision_results = {}
+
+        # Format market data for LLMs
+        market_data = self.market_data.format_market_data_for_llm(
+            include_indicators=True,
+            indicator_data=indicators
+        )
+
+        for llm_id, llm_client in self.llm_clients.items():
+            try:
+                app_logger.info(f"Getting grid decision from {llm_id}...")
+
+                # Get account
+                account = self.accounts.get_account(llm_id)
+
+                # Get active grids for this LLM
+                active_grids = self.grid_engine.get_llm_grids(llm_id)
+                active_grids_data = [grid.to_dict() for grid in active_grids]
+
+                # Get recent grid performance
+                grid_performance = self.grid_engine.get_performance_summary()
+
+                # Get grid decision from LLM
+                llm_response = llm_client.get_grid_decision(
+                    account_info=account.to_dict(),
+                    market_data=market_data,
+                    active_grids=active_grids_data,
+                    recent_performance=grid_performance
+                )
+
+                decision = llm_response["decision"]
+                metadata = {
+                    k: v for k, v in llm_response.items() if k != "decision"
+                }
+
+                # Execute grid action
+                execution_result = self._execute_grid_action(
+                    llm_id=llm_id,
+                    decision=decision,
+                    account=account,
+                    current_prices=current_prices
+                )
+
+                # Save grid decision to database
+                self._save_grid_decision(llm_id, decision, metadata, execution_result)
+
+                # Sync account state
+                self.accounts.sync_account_to_db(llm_id)
+
+                # Record result
+                decision_results[llm_id] = {
+                    "decision": decision,
+                    "execution": execution_result,
+                    "metadata": metadata
+                }
+
+                app_logger.info(
+                    f"{llm_id}: {decision['action']} - "
+                    f"{execution_result.get('message', 'N/A')}"
+                )
+
+            except Exception as e:
+                app_logger.error(f"Failed to process {llm_id} grid decision: {e}", exc_info=True)
+                decision_results[llm_id] = {
+                    "error": str(e),
+                    "status": "ERROR"
+                }
+
+        return decision_results
+
+    def _execute_grid_action(
+        self,
+        llm_id: str,
+        decision: Dict[str, Any],
+        account: Any,
+        current_prices: Dict[str, Decimal]
+    ) -> Dict[str, Any]:
+        """
+        Execute grid trading action based on LLM decision.
+
+        Args:
+            llm_id: LLM identifier
+            decision: Grid trading decision
+            account: Trading account
+            current_prices: Current market prices
+
+        Returns:
+            Execution result dict
+        """
+        action = decision["action"]
+        symbol = decision.get("symbol")
+
+        try:
+            if action == "SETUP_GRID":
+                # Create new grid
+                grid_config_data = decision["grid_config"]
+
+                # Validate symbol
+                if symbol not in self.market_data.symbols:
+                    return {
+                        "status": "REJECTED",
+                        "action": action,
+                        "message": f"Invalid symbol: {symbol}"
+                    }
+
+                # Check if grid already exists for this symbol
+                existing_grids = self.grid_engine.get_llm_grids(llm_id)
+                if any(g.config.symbol == symbol for g in existing_grids):
+                    return {
+                        "status": "REJECTED",
+                        "action": action,
+                        "message": f"Grid already exists for {symbol}"
+                    }
+
+                # Create grid configuration
+                grid_config = GridConfig(
+                    symbol=symbol,
+                    upper_limit=Decimal(str(grid_config_data["upper_limit"])),
+                    lower_limit=Decimal(str(grid_config_data["lower_limit"])),
+                    grid_levels=grid_config_data["grid_levels"],
+                    spacing_type=grid_config_data["spacing_type"],
+                    leverage=grid_config_data["leverage"],
+                    investment_usd=Decimal(str(grid_config_data["investment_usd"])),
+                    stop_loss_pct=Decimal(str(grid_config_data["stop_loss_pct"]))
+                )
+
+                # Create grid
+                grid = self.grid_engine.create_grid(llm_id, grid_config)
+
+                # Place grid orders on Binance
+                placement_result = self.executor.place_grid_orders(grid, llm_id)
+
+                if placement_result["status"] != "SUCCESS":
+                    # Failed to place orders, stop grid
+                    self.grid_engine.stop_grid(grid.grid_id, reason="ORDER_PLACEMENT_FAILED")
+                    return {
+                        "status": "ERROR",
+                        "action": action,
+                        "message": f"Failed to place grid orders: {placement_result['message']}",
+                        "grid_id": grid.grid_id,
+                        "symbol": symbol
+                    }
+
+                app_logger.info(
+                    f"[{llm_id}] Grid created and orders placed for {symbol}: "
+                    f"${grid_config.lower_limit}-${grid_config.upper_limit}, "
+                    f"{grid_config.grid_levels} levels, {grid_config.spacing_type} spacing, "
+                    f"{len(placement_result['placed'])} orders placed"
+                )
+
+                return {
+                    "status": "SUCCESS",
+                    "action": action,
+                    "message": f"Grid created for {symbol} with {len(placement_result['placed'])} orders",
+                    "grid_id": grid.grid_id,
+                    "symbol": symbol,
+                    "orders_placed": len(placement_result['placed'])
+                }
+
+            elif action == "UPDATE_GRID":
+                # Update existing grid
+                existing_grids = self.grid_engine.get_llm_grids(llm_id)
+                target_grid = next((g for g in existing_grids if g.config.symbol == symbol), None)
+
+                if not target_grid:
+                    return {
+                        "status": "REJECTED",
+                        "action": action,
+                        "message": f"No existing grid for {symbol}"
+                    }
+
+                # Cancel old grid orders
+                cancel_result = self.executor.cancel_grid_orders(target_grid, llm_id)
+                app_logger.info(
+                    f"[{llm_id}] Cancelled {len(cancel_result['cancelled'])} orders from old grid"
+                )
+
+                # Stop old grid
+                self.grid_engine.stop_grid(target_grid.grid_id, reason="UPDATE")
+
+                # Create new grid with updated parameters
+                grid_config_data = decision["grid_config"]
+                grid_config = GridConfig(
+                    symbol=symbol,
+                    upper_limit=Decimal(str(grid_config_data["upper_limit"])),
+                    lower_limit=Decimal(str(grid_config_data["lower_limit"])),
+                    grid_levels=grid_config_data["grid_levels"],
+                    spacing_type=grid_config_data["spacing_type"],
+                    leverage=grid_config_data["leverage"],
+                    investment_usd=Decimal(str(grid_config_data["investment_usd"])),
+                    stop_loss_pct=Decimal(str(grid_config_data["stop_loss_pct"]))
+                )
+
+                new_grid = self.grid_engine.create_grid(llm_id, grid_config)
+
+                # Place new grid orders
+                placement_result = self.executor.place_grid_orders(new_grid, llm_id)
+
+                if placement_result["status"] != "SUCCESS":
+                    # Failed to place orders, stop grid
+                    self.grid_engine.stop_grid(new_grid.grid_id, reason="ORDER_PLACEMENT_FAILED")
+                    return {
+                        "status": "ERROR",
+                        "action": action,
+                        "message": f"Failed to place updated grid orders: {placement_result['message']}",
+                        "grid_id": new_grid.grid_id,
+                        "symbol": symbol
+                    }
+
+                app_logger.info(
+                    f"[{llm_id}] Grid updated for {symbol}: "
+                    f"{len(placement_result['placed'])} new orders placed"
+                )
+
+                return {
+                    "status": "SUCCESS",
+                    "action": action,
+                    "message": f"Grid updated for {symbol} with {len(placement_result['placed'])} orders",
+                    "grid_id": new_grid.grid_id,
+                    "symbol": symbol,
+                    "orders_placed": len(placement_result['placed'])
+                }
+
+            elif action == "STOP_GRID":
+                # Stop existing grid
+                existing_grids = self.grid_engine.get_llm_grids(llm_id)
+                target_grid = next((g for g in existing_grids if g.config.symbol == symbol), None)
+
+                if not target_grid:
+                    return {
+                        "status": "REJECTED",
+                        "action": action,
+                        "message": f"No active grid for {symbol}"
+                    }
+
+                # Cancel all pending grid orders
+                cancel_result = self.executor.cancel_grid_orders(target_grid, llm_id)
+
+                # Stop grid
+                self.grid_engine.stop_grid(target_grid.grid_id, reason="LLM_DECISION")
+
+                app_logger.info(
+                    f"[{llm_id}] Grid stopped for {symbol}: "
+                    f"{len(cancel_result['cancelled'])} orders cancelled"
+                )
+
+                return {
+                    "status": "SUCCESS",
+                    "action": action,
+                    "message": f"Grid stopped for {symbol}, {len(cancel_result['cancelled'])} orders cancelled",
+                    "grid_id": target_grid.grid_id,
+                    "symbol": symbol,
+                    "orders_cancelled": len(cancel_result['cancelled'])
+                }
+
+            elif action == "HOLD":
+                # No action taken
+                return {
+                    "status": "SUCCESS",
+                    "action": action,
+                    "message": "No grid action taken (HOLD decision)"
+                }
+
+            else:
+                return {
+                    "status": "REJECTED",
+                    "action": action,
+                    "message": f"Unknown action: {action}"
+                }
+
+        except Exception as e:
+            app_logger.error(f"[{llm_id}] Failed to execute grid action {action}: {e}", exc_info=True)
+            return {
+                "status": "ERROR",
+                "action": action,
+                "message": str(e)
+            }
+
+    def _save_grid_decision(
+        self,
+        llm_id: str,
+        decision: Dict[str, Any],
+        metadata: Dict[str, Any],
+        execution_result: Dict[str, Any]
+    ) -> None:
+        """
+        Save grid trading decision to database.
+
+        Args:
+            llm_id: LLM identifier
+            decision: Grid decision
+            metadata: LLM response metadata
+            execution_result: Execution result
+        """
+        try:
+            grid_config = decision.get("grid_config", {})
+
+            decision_data = {
+                "llm_id": llm_id,
+                "action": decision["action"],
+                "symbol": decision.get("symbol"),
+                "quantity_usd": grid_config.get("investment_usd"),
+                "leverage": grid_config.get("leverage"),
+                "stop_loss_pct": grid_config.get("stop_loss_pct"),
+                "take_profit_pct": None,  # Grid trading doesn't use take profit
+                "reasoning": decision.get("reasoning"),
+                "confidence": decision.get("confidence"),
+                "strategy": "grid_trading",
+                "execution_status": execution_result["status"],
+                "execution_message": execution_result.get("message"),
+                "tokens_used": metadata.get("tokens", {}).get("total", 0),
+                "cost_usd": metadata.get("cost_usd", 0.0),
+                "response_time_ms": metadata.get("response_time_ms", 0),
+                "created_at": datetime.utcnow().isoformat()
+            }
+
+            self.db.insert_llm_decision(decision_data)
+
+        except Exception as e:
+            app_logger.error(f"Failed to save {llm_id} grid decision to DB: {e}")
+
+    def _process_llm_decisions_DEPRECATED(
+        self,
+        current_prices: Dict[str, Decimal],
+        indicators: Dict[str, Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        [DEPRECATED] Get decisions from all LLMs and execute them.
+        Kept for reference. System now uses grid trading decisions.
 
         Args:
             current_prices: Current market prices
