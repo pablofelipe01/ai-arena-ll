@@ -852,3 +852,63 @@ class BinanceClient:
         rounded = rounded.quantize(Decimal(10) ** -precision)
 
         return rounded
+
+    def round_tick_size(self, symbol: str, price: Decimal) -> Decimal:
+        """
+        Redondear precio según el tick size del símbolo.
+
+        Args:
+            symbol: Par de trading (ej: BTCUSDT)
+            price: Precio a redondear
+
+        Returns:
+            Precio redondeado según el tick size
+        """
+        # Check cache first - if not cached, get and cache tick size
+        if symbol not in self._symbol_info_cache or "tick_size" not in self._symbol_info_cache.get(symbol, {}):
+            try:
+                # Get exchange info for this symbol
+                info = self.get_exchange_info(symbol=symbol)
+
+                # Find the symbol in the response
+                symbol_info = None
+                for s in info.get("symbols", []):
+                    if s["symbol"] == symbol:
+                        symbol_info = s
+                        break
+
+                if not symbol_info:
+                    app_logger.warning(f"Symbol {symbol} not found in exchange info, using default price precision")
+                    return price.quantize(Decimal("0.01"))
+
+                # Extract PRICE_FILTER
+                tick_size = None
+                for f in symbol_info.get("filters", []):
+                    if f["filterType"] == "PRICE_FILTER":
+                        tick_size = Decimal(str(f["tickSize"]))
+                        break
+
+                if not tick_size:
+                    app_logger.warning(f"PRICE_FILTER not found for {symbol}, using default price precision")
+                    return price.quantize(Decimal("0.01"))
+
+                # Cache the tick size (update existing cache or create new)
+                if symbol in self._symbol_info_cache:
+                    self._symbol_info_cache[symbol]["tick_size"] = tick_size
+                else:
+                    self._symbol_info_cache[symbol] = {"tick_size": tick_size}
+
+            except Exception as e:
+                app_logger.error(f"Failed to get exchange info for {symbol}: {e}")
+                # Fallback to default precision
+                return price.quantize(Decimal("0.01"))
+
+        # Get cached tick size
+        tick_size = self._symbol_info_cache[symbol]["tick_size"]
+
+        # Round to nearest tick size
+        precision = abs(tick_size.as_tuple().exponent)
+        rounded = (price // tick_size) * tick_size
+        rounded = rounded.quantize(Decimal(10) ** -precision)
+
+        return rounded
