@@ -632,7 +632,7 @@ async def get_binance_status(
                 pass
 
         # Parse positions by LLM
-        positions_by_llm = {"LLM-A": [], "LLM-B": [], "LLM-C": []}
+        positions_by_llm = {"LLM-A": [], "LLM-B": [], "LLM-C": [], "Unknown": []}
         for pos in active_positions:
             symbol = pos['symbol']
             position_amt = float(pos['positionAmt'])

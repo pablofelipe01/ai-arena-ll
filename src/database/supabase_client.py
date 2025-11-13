@@ -639,6 +639,18 @@ class SupabaseClient:
             app_logger.error(f"Error upserting market data: {e}")
             raise DatabaseError(f"Failed to upsert market data: {str(e)}")
 
+    def insert_market_data(self, market_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Alias for upsert_market_data for backwards compatibility.
+
+        Args:
+            market_data: Datos de mercado
+
+        Returns:
+            Market data guardado
+        """
+        return self.upsert_market_data(market_data)
+
     def get_latest_market_data(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
         Obtener últimos datos de mercado para un símbolo.
