@@ -12,6 +12,7 @@ import uuid
 
 from src.utils.logger import app_logger
 from src.utils.exceptions import TradingError
+from src.utils.telegram_notifier import get_telegram_notifier
 
 
 class GridLevel:
@@ -76,16 +77,16 @@ class GridConfig:
             raise ValueError("Upper limit must be greater than lower limit")
         if grid_levels < 5:
             raise ValueError("Minimum 5 grid levels required")
-        if grid_levels > 50:
-            raise ValueError("Maximum 50 grid levels allowed")
+        if grid_levels > 8:
+            raise ValueError("Maximum 8 grid levels allowed")
         if spacing_type not in ["arithmetic", "geometric"]:
             raise ValueError("Spacing type must be 'arithmetic' or 'geometric'")
         if leverage < 1 or leverage > 5:
             raise ValueError("Leverage must be between 1x and 5x")
-        if investment_usd < Decimal("5"):
-            raise ValueError("Minimum investment $5")
-        if investment_usd > Decimal("10"):
-            raise ValueError("Maximum investment $10 per grid")
+        if investment_usd < Decimal("100"):
+            raise ValueError("Minimum investment $100")
+        if investment_usd > Decimal("300"):
+            raise ValueError("Maximum investment $300 per grid")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -150,8 +151,9 @@ class GridInstance:
             ]
 
         # Calculate quantity per level
-        # Total investment split across all levels
-        investment_per_level = config.investment_usd / Decimal(str(config.grid_levels))
+        # Total investment split across all levels (with leverage applied)
+        total_position_size = config.investment_usd * Decimal(str(config.leverage))
+        investment_per_level = total_position_size / Decimal(str(config.grid_levels))
 
         # Generate buy and sell levels
         for i, price in enumerate(prices):
@@ -274,6 +276,18 @@ class GridInstance:
                 f"[{self.llm_id}] STOP LOSS TRIGGERED for grid {self.grid_id}: "
                 f"Price ${current_price} <= Stop ${stop_loss_price}"
             )
+
+            # Send Telegram notification
+            telegram = get_telegram_notifier()
+            if telegram and telegram.enabled:
+                telegram.notify_stop_loss_triggered(
+                    llm_id=self.llm_id,
+                    symbol=self.config.symbol,
+                    grid_id=self.grid_id,
+                    current_price=float(current_price),
+                    stop_price=float(stop_loss_price)
+                )
+
             return True
 
         return False
@@ -417,6 +431,198 @@ class GridEngine:
             "total_profit_usdt": float(total_profit),
             "llm_stats": llm_stats
         }
+
+    def sync_from_binance(self, binance_client) -> Dict[str, Any]:
+        """
+        Synchronize grid state from Binance open orders.
+
+        This method reconstructs GridInstances from existing orders on Binance.
+        Critical for recovering state after server restart.
+
+        Args:
+            binance_client: BinanceClient instance
+
+        Returns:
+            Dict with sync statistics
+        """
+        from decimal import Decimal
+        import re
+
+        app_logger.info("=" * 60)
+        app_logger.info("SYNCING GRIDS FROM BINANCE")
+        app_logger.info("=" * 60)
+
+        # Get all open orders from Binance
+        symbols = ["ETHUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT"]
+        all_orders = []
+
+        for symbol in symbols:
+            try:
+                orders = binance_client.get_open_orders(symbol)
+                all_orders.extend(orders)
+            except Exception as e:
+                app_logger.warning(f"Failed to get orders for {symbol}: {e}")
+
+        app_logger.info(f"Found {len(all_orders)} open orders on Binance")
+
+        # Parse orders and group by grid_id
+        # Pattern: GRID_LLM-X_SYMBOL_GRIDID_SIDE_LEVEL
+        pattern = re.compile(r'^GRID_(LLM-[ABC])_([A-Z]+)_([a-f0-9]{8})_(BUY|SELL)_(\d+)$')
+
+        grids_data = {}  # grid_id -> {orders, llm_id, symbol, ...}
+        orphan_orders = []
+
+        for order in all_orders:
+            client_id = order.get('clientOrderId', '')
+            match = pattern.match(client_id)
+
+            if match:
+                llm_id, symbol, grid_id_short, side, level = match.groups()
+                grid_id = f"GRID_{llm_id}_{symbol}_{grid_id_short}"
+
+                if grid_id not in grids_data:
+                    grids_data[grid_id] = {
+                        'grid_id': grid_id,
+                        'llm_id': llm_id,
+                        'symbol': symbol,
+                        'orders': []
+                    }
+
+                grids_data[grid_id]['orders'].append({
+                    'order': order,
+                    'side': side,
+                    'level': int(level),
+                    'price': Decimal(str(order['price'])),
+                    'quantity': Decimal(str(order['origQty'])),
+                    'order_id': order['orderId']
+                })
+            else:
+                # Order doesn't match grid pattern
+                if 'GRID_' in client_id:
+                    orphan_orders.append(order)
+
+        app_logger.info(f"Identified {len(grids_data)} unique grids from orders")
+        app_logger.info(f"Found {len(orphan_orders)} orphan orders (old pattern or invalid)")
+
+        # Reconstruct GridInstance for each grid
+        synced_grids = 0
+        failed_grids = 0
+
+        for grid_id, grid_data in grids_data.items():
+            try:
+                # Extract grid configuration from orders
+                orders = grid_data['orders']
+                prices = [o['price'] for o in orders]
+
+                if not prices:
+                    app_logger.warning(f"Grid {grid_id} has no orders, skipping")
+                    continue
+
+                lower_limit = min(prices)
+                upper_limit = max(prices)
+                grid_levels = len(set(prices))  # Unique price levels
+
+                # Infer spacing type (simplified - assume geometric)
+                spacing_type = "geometric"
+
+                # Infer leverage and investment from order sizes
+                # This is approximate since we don't have original config
+                avg_quantity = sum(o['quantity'] for o in orders) / len(orders)
+                avg_price = sum(prices) / len(prices)
+                estimated_investment = avg_quantity * avg_price * Decimal(str(grid_levels)) / Decimal("2")
+
+                # Create grid config
+                config = GridConfig(
+                    symbol=grid_data['symbol'],
+                    upper_limit=upper_limit,
+                    lower_limit=lower_limit,
+                    grid_levels=grid_levels,
+                    spacing_type=spacing_type,
+                    leverage=3,  # Default assumption
+                    investment_usd=estimated_investment,
+                    stop_loss_pct=Decimal("12")  # Default
+                )
+
+                # Create grid instance
+                grid = GridInstance(
+                    grid_id=grid_id,
+                    llm_id=grid_data['llm_id'],
+                    config=config,
+                    created_at=datetime.utcnow()  # We don't know original timestamp
+                )
+
+                # Mark orders as pending (they're still active on Binance)
+                for order_data in orders:
+                    level_id = f"{grid_id}_{order_data['side']}_{order_data['level']}"
+
+                    # Find matching level in grid
+                    for level in grid.buy_levels + grid.sell_levels:
+                        if level.level_id == level_id:
+                            level.status = "PENDING"
+                            level.order_id = str(order_data['order_id'])
+                            break
+
+                # Add to active grids
+                self.active_grids[grid_id] = grid
+
+                if grid_data['llm_id'] not in self.grids_by_llm:
+                    self.grids_by_llm[grid_data['llm_id']] = []
+                self.grids_by_llm[grid_data['llm_id']].append(grid_id)
+
+                synced_grids += 1
+                app_logger.info(
+                    f"✓ Synced grid {grid_id}: {grid_data['symbol']} "
+                    f"(${lower_limit:.2f}-${upper_limit:.2f}, {len(orders)} orders)"
+                )
+
+            except Exception as e:
+                failed_grids += 1
+                app_logger.error(f"Failed to sync grid {grid_id}: {e}", exc_info=True)
+
+        # Summary
+        summary = {
+            'total_orders': len(all_orders),
+            'unique_grids_found': len(grids_data),
+            'grids_synced': synced_grids,
+            'grids_failed': failed_grids,
+            'orphan_orders': len(orphan_orders),
+            'grids_by_llm': {
+                llm_id: len(grid_ids)
+                for llm_id, grid_ids in self.grids_by_llm.items()
+            }
+        }
+
+        app_logger.info("=" * 60)
+        app_logger.info(f"SYNC COMPLETE: {synced_grids} grids synced, {failed_grids} failed")
+        app_logger.info(f"Grids by LLM: {summary['grids_by_llm']}")
+        if orphan_orders:
+            app_logger.warning(f"⚠️  {len(orphan_orders)} orphan orders detected (may need manual cleanup)")
+        app_logger.info("=" * 60)
+
+        return summary
+
+    def cancel_orphan_orders(self, binance_client, orphan_order_ids: List[int]) -> int:
+        """
+        Cancel orphan orders that don't belong to any known grid.
+
+        Args:
+            binance_client: BinanceClient instance
+            orphan_order_ids: List of order IDs to cancel
+
+        Returns:
+            Number of orders cancelled
+        """
+        cancelled = 0
+
+        for order_id in orphan_order_ids:
+            try:
+                # We'd need to know the symbol to cancel, this is a simplified version
+                app_logger.info(f"Would cancel orphan order {order_id}")
+                cancelled += 1
+            except Exception as e:
+                app_logger.error(f"Failed to cancel order {order_id}: {e}")
+
+        return cancelled
 
     def __repr__(self) -> str:
         """String representation."""

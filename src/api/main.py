@@ -32,6 +32,7 @@ from src.api.dependencies import (
 )
 from src.background.scheduler import initialize_scheduler, cleanup_scheduler
 from src.utils.logger import app_logger
+from src.utils.telegram_notifier import initialize_telegram_notifier, get_telegram_notifier
 from config.settings import settings
 
 
@@ -54,12 +55,39 @@ async def lifespan(app: FastAPI):
     app_logger.info("=" * 60)
 
     try:
+        # Initialize Telegram notifications
+        telegram = initialize_telegram_notifier(
+            bot_token=settings.TELEGRAM_BOT_TOKEN,
+            chat_id=settings.TELEGRAM_CHAT_ID,
+            enabled=settings.TELEGRAM_NOTIFICATIONS_ENABLED
+        )
+        if telegram and telegram.enabled:
+            app_logger.info("Telegram notifications enabled")
+
         # Initialize all services
         initialize_all_services()
         app_logger.info("API server ready")
 
         # Initialize and start background scheduler
         trading_service = get_trading_service()
+
+        # CRITICAL: Sync grid state from Binance before starting cycles
+        app_logger.info("Initializing TradingService from Binance...")
+        init_result = trading_service.initialize()
+        grids_recovered = 0
+        if init_result.get("success"):
+            grid_sync = init_result.get("grid_sync", {})
+            grids_recovered = grid_sync.get('grids_synced', 0)
+            app_logger.info(
+                f"Grid sync complete: {grids_recovered} grids recovered"
+            )
+        else:
+            app_logger.warning(f"Grid sync failed: {init_result.get('error', 'Unknown')}")
+
+        # Notify server started
+        if telegram and telegram.enabled:
+            telegram.notify_server_started(grids_recovered=grids_recovered)
+
         scheduler = initialize_scheduler(trading_service)
 
         # Start scheduler with 5-minute intervals
@@ -79,6 +107,11 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     app_logger.info("Shutting down FastAPI application...")
+
+    # Notify server stopping
+    telegram = get_telegram_notifier()
+    if telegram and telegram.enabled:
+        telegram.notify_server_stopped()
 
     # Stop background scheduler
     cleanup_scheduler()
@@ -140,6 +173,15 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         f"Unhandled exception on {request.method} {request.url}: {exc}",
         exc_info=True
     )
+
+    # Send Telegram notification for critical errors
+    telegram = get_telegram_notifier()
+    if telegram and telegram.enabled:
+        telegram.notify_error(
+            error_type="API Error",
+            error_msg=f"{request.method} {request.url.path}",
+            details=str(exc)[:200]  # Limit to 200 chars
+        )
 
     return JSONResponse(
         status_code=500,

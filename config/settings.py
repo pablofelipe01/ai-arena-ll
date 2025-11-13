@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_KEY: str = ""
 
     # ============================================
+    # TELEGRAM NOTIFICATIONS
+    # ============================================
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+    TELEGRAM_NOTIFICATIONS_ENABLED: bool = False
+
+    # ============================================
     # LLM API KEYS (Optional para flexibilidad)
     # ============================================
     CLAUDE_API_KEY: Optional[str] = None

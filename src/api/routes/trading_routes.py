@@ -529,3 +529,182 @@ async def get_leaderboard(
     except Exception as e:
         app_logger.error(f"Error getting leaderboard: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Grids Endpoint
+# ============================================================================
+
+@router.get(
+    "/grids",
+    summary="Get active grids",
+    description="Returns all active grid trading instances with their performance metrics."
+)
+async def get_active_grids(
+    service: TradingService = Depends(get_trading_service_dependency)
+) -> JSONResponse:
+    """
+    Get all active grid trading instances.
+
+    Returns:
+        Dict with grids by LLM and summary statistics.
+    """
+    try:
+        # Get all active grids from GridEngine
+        all_grids = service.grid_engine.get_all_active_grids()
+
+        # Group grids by LLM
+        grids_by_llm = {}
+        total_grids = 0
+        total_cycles = 0
+        total_profit = 0.0
+
+        for grid in all_grids:
+            llm_id = grid.llm_id
+            if llm_id not in grids_by_llm:
+                grids_by_llm[llm_id] = []
+
+            # Get grid performance metrics
+            metrics = grid.get_performance_metrics()
+            grids_by_llm[llm_id].append(metrics)
+
+            total_grids += 1
+            total_cycles += grid.cycles_completed
+            total_profit += float(grid.total_profit_usdt)
+
+        # Get overall grid statistics
+        grid_summary = service.grid_engine.get_performance_summary()
+
+        return JSONResponse(
+            content={
+                "grids": grids_by_llm,
+                "summary": {
+                    "total_active_grids": total_grids,
+                    "total_cycles_completed": total_cycles,
+                    "total_profit_usdt": total_profit,
+                    "grid_stats": grid_summary
+                },
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        )
+
+    except Exception as e:
+        app_logger.error(f"Error getting grids: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# Binance Direct Data Endpoint
+# ============================================================================
+
+@router.get(
+    "/binance-status",
+    summary="Get live Binance account status",
+    description="Returns real-time positions and orders directly from Binance Futures."
+)
+async def get_binance_status(
+    service: TradingService = Depends(get_trading_service_dependency)
+) -> JSONResponse:
+    """
+    Get real-time positions and orders directly from Binance.
+
+    Returns:
+        Dict with positions and open orders from Binance.
+    """
+    try:
+        binance = service.executor.binance
+
+        # Get account info
+        account_info = binance.get_account_info()
+
+        # Get all positions
+        positions = binance.get_position_risk()
+        active_positions = [p for p in positions if float(p.get('positionAmt', 0)) != 0]
+
+        # Get all open orders
+        all_orders = []
+        symbols = ["ETHUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT"]
+        for symbol in symbols:
+            try:
+                orders = binance.get_open_orders(symbol)
+                all_orders.extend(orders)
+            except:
+                pass
+
+        # Parse positions by LLM
+        positions_by_llm = {"LLM-A": [], "LLM-B": [], "LLM-C": []}
+        for pos in active_positions:
+            symbol = pos['symbol']
+            position_amt = float(pos['positionAmt'])
+            entry_price = float(pos['entryPrice'])
+            unrealized_pnl = float(pos['unRealizedProfit'])
+            leverage = int(pos['leverage'])
+
+            # Try to determine LLM from open orders
+            llm_id = "Unknown"
+            for order in all_orders:
+                if order['symbol'] == symbol:
+                    client_id = order.get('clientOrderId', '')
+                    if 'LLM-A' in client_id:
+                        llm_id = "LLM-A"
+                        break
+                    elif 'LLM-B' in client_id:
+                        llm_id = "LLM-B"
+                        break
+                    elif 'LLM-C' in client_id:
+                        llm_id = "LLM-C"
+                        break
+
+            positions_by_llm[llm_id].append({
+                "symbol": symbol,
+                "side": "LONG" if position_amt > 0 else "SHORT",
+                "entry_price": entry_price,
+                "quantity": abs(position_amt),
+                "leverage": leverage,
+                "unrealized_pnl_usd": unrealized_pnl,
+                "roi_pct": (unrealized_pnl / (abs(position_amt) * entry_price / leverage)) * 100 if position_amt != 0 else 0
+            })
+
+        # Parse orders by LLM
+        orders_by_llm = {"LLM-A": 0, "LLM-B": 0, "LLM-C": 0, "Unknown": 0}
+        for order in all_orders:
+            client_id = order.get('clientOrderId', '')
+            if 'LLM-A' in client_id:
+                orders_by_llm["LLM-A"] += 1
+            elif 'LLM-B' in client_id:
+                orders_by_llm["LLM-B"] += 1
+            elif 'LLM-C' in client_id:
+                orders_by_llm["LLM-C"] += 1
+            else:
+                orders_by_llm["Unknown"] += 1
+
+        # Get balance
+        balance = float(account_info.get('totalWalletBalance', 0))
+        available_balance = float(account_info.get('availableBalance', 0))
+        total_unrealized_pnl = float(account_info.get('totalUnrealizedProfit', 0))
+
+        return JSONResponse(
+            content={
+                "balance": {
+                    "total_balance": balance,
+                    "available_balance": available_balance,
+                    "total_unrealized_pnl": total_unrealized_pnl
+                },
+                "positions": positions_by_llm,
+                "open_orders": {
+                    "total": len(all_orders),
+                    "by_llm": orders_by_llm,
+                    "orders": all_orders[:20]  # First 20 orders for details
+                },
+                "summary": {
+                    "total_positions": len(active_positions),
+                    "total_open_orders": len(all_orders),
+                    "symbols_with_positions": list(set([p['symbol'] for p in active_positions]))
+                },
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        )
+
+    except Exception as e:
+        app_logger.error(f"Error getting Binance status: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

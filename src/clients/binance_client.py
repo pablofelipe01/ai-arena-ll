@@ -449,7 +449,8 @@ class BinanceClient:
         side: str,
         quantity: Decimal,
         price: Decimal,
-        time_in_force: str = "GTC"
+        time_in_force: str = "GTC",
+        newClientOrderId: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Crear orden LIMIT.
@@ -460,17 +461,23 @@ class BinanceClient:
             quantity: Cantidad
             price: Precio límite
             time_in_force: 'GTC', 'IOC', 'FOK'
+            newClientOrderId: Client order ID personalizado para tracking
 
         Returns:
             Dict con información de la orden
         """
+        kwargs = {}
+        if newClientOrderId:
+            kwargs["newClientOrderId"] = newClientOrderId
+
         return self.create_order(
             symbol=symbol,
             side=side,
             order_type="LIMIT",
             quantity=quantity,
             price=price,
-            time_in_force=time_in_force
+            time_in_force=time_in_force,
+            **kwargs
         )
 
     def cancel_order(self, symbol: str, order_id: Optional[int] = None) -> Dict[str, Any]:

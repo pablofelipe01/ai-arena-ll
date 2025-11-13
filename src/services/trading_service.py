@@ -24,6 +24,7 @@ from src.clients.llm_client import BaseLLMClient
 from src.database.supabase_client import SupabaseClient
 from src.utils.logger import app_logger
 from src.utils.exceptions import TradingError
+from src.utils.telegram_notifier import get_telegram_notifier
 
 
 class TradingService:
@@ -67,10 +68,48 @@ class TradingService:
 
         # Initialize Grid Trading Engine
         self.grid_engine = GridEngine()
+        self._grid_synced = False  # Track if we've synced grids from Binance
 
         app_logger.info(
             f"TradingService initialized with {len(llm_clients)} LLM clients and Grid Engine"
         )
+
+    def initialize(self) -> Dict[str, Any]:
+        """
+        Initialize trading service state from Binance.
+
+        Must be called once after construction, before executing trading cycles.
+        Synchronizes grid state from existing orders on Binance.
+
+        Returns:
+            Dict with initialization statistics
+        """
+        if self._grid_synced:
+            app_logger.warning("TradingService already initialized, skipping")
+            return {"already_initialized": True}
+
+        app_logger.info("=" * 60)
+        app_logger.info("INITIALIZING TRADING SERVICE FROM BINANCE")
+        app_logger.info("=" * 60)
+
+        try:
+            # Sync grids from Binance orders
+            sync_result = self.grid_engine.sync_from_binance(self.executor.binance)
+
+            self._grid_synced = True
+
+            app_logger.info("TradingService initialization complete")
+            return {
+                "success": True,
+                "grid_sync": sync_result
+            }
+
+        except Exception as e:
+            app_logger.error(f"Failed to initialize TradingService: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
     def execute_trading_cycle(self) -> Dict[str, Any]:
         """
@@ -264,6 +303,21 @@ class TradingService:
                         f"{fills} fills, {cycles} cycles completed"
                     )
 
+                    # Send Telegram notification for completed cycles
+                    if cycles > 0:
+                        telegram = get_telegram_notifier()
+                        if telegram and telegram.enabled:
+                            # Get cycle details from the result
+                            for cycle_data in result.get("cycles_detected", []):
+                                telegram.notify_grid_cycle_completed(
+                                    llm_id=grid.llm_id,
+                                    symbol=grid.config.symbol,
+                                    buy_price=float(cycle_data.get("buy_price", 0)),
+                                    sell_price=float(cycle_data.get("sell_price", 0)),
+                                    profit=float(cycle_data.get("profit", 0)),
+                                    cycle_number=grid.cycles_completed
+                                )
+
                     # Store result
                     if grid.llm_id not in monitoring_results:
                         monitoring_results[grid.llm_id] = []
@@ -415,13 +469,44 @@ class TradingService:
                         "message": f"Invalid symbol: {symbol}"
                     }
 
-                # Check if grid already exists for this symbol
+                # Check if grid already exists for this symbol (only ACTIVE grids)
                 existing_grids = self.grid_engine.get_llm_grids(llm_id)
-                if any(g.config.symbol == symbol for g in existing_grids):
+                active_grids = [g for g in existing_grids if g.status == "ACTIVE"]
+                if any(g.config.symbol == symbol for g in active_grids):
                     return {
                         "status": "REJECTED",
                         "action": action,
                         "message": f"Grid already exists for {symbol}"
+                    }
+
+                # Check available balance for margin requirement (worst-case scenario)
+                investment_usd = Decimal(str(grid_config_data["investment_usd"]))
+                leverage = grid_config_data["leverage"]
+                margin_required = investment_usd / Decimal(str(leverage))
+
+                available_balance = self.executor.binance.get_available_balance()
+
+                if available_balance < margin_required:
+                    error_msg = (
+                        f"Insufficient margin: ${available_balance:.2f} available, "
+                        f"${margin_required:.2f} required (${investment_usd} / {leverage}x)"
+                    )
+
+                    app_logger.warning(f"[{llm_id}] Grid creation rejected: {error_msg}")
+
+                    # Send Telegram notification
+                    telegram = get_telegram_notifier()
+                    if telegram and telegram.enabled:
+                        telegram.notify_error(
+                            error_type="Insufficient Margin",
+                            error_msg=f"{llm_id} - {symbol}",
+                            details=f"Required: ${margin_required:.2f}, Available: ${available_balance:.2f}"
+                        )
+
+                    return {
+                        "status": "REJECTED",
+                        "action": action,
+                        "message": error_msg
                     }
 
                 # Create grid configuration
@@ -459,6 +544,16 @@ class TradingService:
                     f"{grid_config.grid_levels} levels, {grid_config.spacing_type} spacing, "
                     f"{len(placement_result['placed'])} orders placed"
                 )
+
+                # Send Telegram notification
+                telegram = get_telegram_notifier()
+                if telegram and telegram.enabled:
+                    telegram.notify_grid_created(
+                        llm_id=llm_id,
+                        symbol=symbol,
+                        grid_id=grid.grid_id,
+                        config=grid_config.to_dict()
+                    )
 
                 return {
                     "status": "SUCCESS",

@@ -11,10 +11,10 @@ from typing import Dict, List, Any
 # Trading constants for grid
 ALLOWED_SYMBOLS = ["ETHUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT"]
 MAX_LEVERAGE = 5
-MIN_GRID_LEVELS = 20
-MAX_GRID_LEVELS = 25
-MIN_INVESTMENT = 5
-MAX_INVESTMENT = 10
+MIN_GRID_LEVELS = 5
+MAX_GRID_LEVELS = 8
+MIN_INVESTMENT = 100
+MAX_INVESTMENT = 300
 MIN_STOP_LOSS_PCT = 10
 MAX_STOP_LOSS_PCT = 15
 
@@ -37,8 +37,8 @@ GRID TRADING FUNDAMENTALS:
 BINANCE FUTURES CONSTRAINTS:
 - Symbols: ETHUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT
 - Leverage: 1x to 5x maximum
-- Grid Levels: 20 to 25 levels
-- Investment: $5 to $10 USD per grid
+- Grid Levels: 5 to 8 levels
+- Investment: $100 to $300 USD per grid
 - Minimum spacing: > 0.14% (to cover fees: 2 × 0.07% = 0.14%)
 - Fees: Taker 0.05%, Maker 0.02% (use 0.05% for calculations)
 
@@ -57,10 +57,10 @@ You MUST respond with a JSON object:
     "grid_config": {{
         "upper_limit": <price>,
         "lower_limit": <price>,
-        "grid_levels": <20-25>,
+        "grid_levels": <5-8>,
         "spacing_type": "geometric" | "arithmetic",
         "leverage": <1-5>,
-        "investment_usd": <5-10>,
+        "investment_usd": <100-300>,
         "stop_loss_pct": <10-15>
     }} | null,
     "reasoning": "<your detailed analysis>",
@@ -88,8 +88,10 @@ DECISION CRITERIA:
 
 3. **For STOP_GRID**:
    - Strong trend detected (not sideways anymore)
-   - Stop loss approaching
+   - Stop loss approaching (Risk Level: HIGH or CRITICAL)
+   - Price breaking below grid range consistently
    - Better opportunity in another symbol
+   - YOU decide if risk is too high - no automatic stops
 
 4. **For HOLD**:
    - Market too trending for grids
@@ -102,10 +104,11 @@ GRID CONFIGURATION GUIDELINES:
    - Add buffer: upper +2%, lower -2%
    - Ensure range is reasonable (min 5% difference)
 
-2. **Grid Levels**: 20-25 levels
+2. **Grid Levels**: 5-8 levels
    - More levels = more opportunities but smaller profit per cycle
    - Fewer levels = bigger profit per cycle but fewer opportunities
-   - Sweet spot: 22-24 levels for most pairs
+   - Sweet spot: 5-6 levels for most pairs (ensures sufficient capital per level)
+   - Remember: Each order needs minimum $20 notional value
 
 3. **Spacing Type**:
    - **Geometric** (recommended): Better for volatile pairs, wide ranges
@@ -117,10 +120,11 @@ GRID CONFIGURATION GUIDELINES:
    - Aggressive: 4-5x
    - Consider volatility: higher volatility → lower leverage
 
-5. **Investment**: $5-10 per grid
-   - Start conservative: $5-7
-   - Increase if grid performs well
+5. **Investment**: $100-300 per grid
+   - Start conservative: $100-150
+   - Increase if grid performs well: $200-300
    - Consider: you can run multiple grids simultaneously
+   - Ensure: investment / levels ≥ $20 per order (Binance minimum notional)
 
 6. **Stop Loss**: 10-15%
    - Tighter (10-12%) for volatile pairs
@@ -209,20 +213,103 @@ Overall Performance:
 - Total Fees Paid: ${recent_performance.get('total_fees', 0):.2f}
 """
 
-    # Build active grids section
+    # Create price lookup dict from market data
+    current_prices = {
+        data.get('symbol'): data.get('price', 0)
+        for data in market_data
+    }
+
+    # Build active grids section with COMPLETE risk information
     grids_section = "\n=== ACTIVE GRIDS ===\n"
     if active_grids:
         for grid in active_grids:
-            grids_section += f"""
+            symbol = grid.get('symbol')
+            lower_limit = grid.get('lower_limit', 0)
+            upper_limit = grid.get('upper_limit', 0)
+            stop_loss_pct = grid.get('stop_loss_pct', 12)
+
+            # Calculate stop loss price
+            stop_loss_price = lower_limit * (1 - stop_loss_pct / 100)
+
+            # Get current price
+            current_price = current_prices.get(symbol, 0)
+
+            # Calculate distances and risk metrics
+            if current_price > 0 and lower_limit > 0:
+                # Distance to boundaries (positive = above, negative = below)
+                dist_to_lower_pct = ((current_price - lower_limit) / lower_limit) * 100
+                dist_to_upper_pct = ((current_price - upper_limit) / upper_limit) * 100
+                dist_to_stop_pct = ((current_price - stop_loss_price) / stop_loss_price) * 100
+
+                # Position within grid (0% = at lower, 100% = at upper)
+                grid_range = upper_limit - lower_limit
+                position_in_grid = ((current_price - lower_limit) / grid_range) * 100 if grid_range > 0 else 0
+
+                # Determine risk level based on price position and stop loss distance
+                if dist_to_stop_pct < 5:
+                    risk_level = "🔴 CRITICAL"
+                    risk_alert = "⚠️  STOP LOSS IMMINENT - Price very close to stop!"
+                elif dist_to_stop_pct < 15:
+                    risk_level = "🟠 HIGH"
+                    risk_alert = "⚠️  High risk - Consider stopping grid or adjusting range"
+                elif current_price < lower_limit:
+                    risk_level = "🟡 MEDIUM"
+                    risk_alert = "⚠️  Price below grid range - Watch for trend breakout"
+                elif dist_to_lower_pct < 2 and current_price >= lower_limit:
+                    risk_level = "🟡 MEDIUM"
+                    risk_alert = "⚠️  Near lower boundary - Watch for trend breakout"
+                else:
+                    risk_level = "🟢 LOW"
+                    risk_alert = "✓ Grid operating normally within range"
+
+                # Build grid info with complete risk data
+                grids_section += f"""
 Grid ID: {grid.get('grid_id')}
-Symbol: {grid.get('symbol')}
+Symbol: {symbol}
 Status: {grid.get('status')}
+
 Configuration:
-  Range: ${grid.get('lower_limit', 0):.2f} - ${grid.get('upper_limit', 0):.2f}
+  Range: ${lower_limit:.2f} - ${upper_limit:.2f}
+  Stop Loss: ${stop_loss_price:.2f} ({stop_loss_pct:.0f}% below lower limit)
   Levels: {grid.get('grid_levels')}
   Spacing: {grid.get('spacing_type')}
   Leverage: {grid.get('leverage')}x
   Investment: ${grid.get('investment_usd', 0):.2f}
+
+Current Market Position:
+  Current Price: ${current_price:.2f}
+  Position in Grid: {position_in_grid:.1f}% (0% = lower, 100% = upper)
+  Distance to Upper Limit: {dist_to_upper_pct:+.2f}% (${current_price - upper_limit:+.2f})
+  Distance to Lower Limit: {dist_to_lower_pct:+.2f}% (${current_price - lower_limit:+.2f})
+  Distance to Stop Loss: {dist_to_stop_pct:+.2f}% (${current_price - stop_loss_price:+.2f})
+
+Risk Assessment:
+  Risk Level: {risk_level}
+  Alert: {risk_alert}
+
+Performance:
+  Cycles Completed: {grid.get('cycles_completed', 0)}
+  Total Profit: ${grid.get('total_profit', 0):.2f}
+  Net Profit (after fees): ${grid.get('net_profit', 0):.2f}
+  ROI: {grid.get('roi_pct', 0):.2f}%
+  Avg Profit/Cycle: ${grid.get('avg_profit_per_cycle', 0):.2f}
+"""
+            else:
+                # Fallback if price data not available
+                grids_section += f"""
+Grid ID: {grid.get('grid_id')}
+Symbol: {symbol}
+Status: {grid.get('status')}
+Configuration:
+  Range: ${lower_limit:.2f} - ${upper_limit:.2f}
+  Stop Loss: ${stop_loss_price:.2f} ({stop_loss_pct:.0f}% below lower limit)
+  Levels: {grid.get('grid_levels')}
+  Spacing: {grid.get('spacing_type')}
+  Leverage: {grid.get('leverage')}x
+  Investment: ${grid.get('investment_usd', 0):.2f}
+
+Current Market Position:
+  ⚠️  Price data unavailable
 
 Performance:
   Cycles Completed: {grid.get('cycles_completed', 0)}
@@ -242,10 +329,23 @@ Analyze each symbol and decide:
 1. Is the market SIDEWAYS (ranging) or TRENDING?
 2. Are there clear support/resistance levels?
 3. Is volatility sufficient for grid trading?
-4. Should you SETUP, UPDATE, STOP, or HOLD?
+4. What is the RISK LEVEL of active grids?
+5. Should you SETUP, UPDATE, STOP, or HOLD?
 
 For each symbol without a grid: Consider setting up if sideways
-For each symbol with a grid: Evaluate if it should continue, be updated, or stopped
+For each symbol with a grid:
+  - Review Current Market Position and Risk Assessment
+  - If Risk Level is CRITICAL or HIGH, seriously consider STOP_GRID
+  - If price near stop loss, YOU must decide: stop now or wait?
+  - If price breaking range, consider stopping before larger losses
+  - Evaluate if it should continue, be updated, or stopped
+
+CRITICAL - YOU ARE 100% AUTONOMOUS:
+- There are NO automatic stop losses or circuit breakers
+- YOU must monitor risk and decide when to stop grids
+- System will NOT intervene even at stop loss price
+- Risk management is YOUR responsibility
+- Use the Risk Assessment data to make informed decisions
 
 KEY CONSIDERATIONS:
 - Grid trading is for SIDEWAYS markets (70-75% of time)
@@ -254,12 +354,15 @@ KEY CONSIDERATIONS:
 - Fees consume profit - spacing must be adequate
 - One grid per symbol maximum
 - Total investment: keep within your available balance
+- Monitor Distance to Stop Loss carefully
+- Act proactively on HIGH/CRITICAL risk levels
 
 OPTIMIZE FOR:
 - Maximum cycles per day (more cycles = more profit)
 - Adequate spacing (> 0.14% minimum, 0.5-2% optimal)
-- Reasonable stop loss (protect capital)
+- Reasonable stop loss (protect capital - YOU must enforce it)
 - Efficient leverage (balance profit vs risk)
+- Capital preservation (better to stop early than lose more)
 
 Choose your BEST opportunity right now.
 Respond ONLY with a JSON object in the exact format specified above.
@@ -351,14 +454,14 @@ def parse_grid_decision(response_text: str) -> Dict[str, Any]:
         if config["upper_limit"] <= config["lower_limit"]:
             raise ValueError("upper_limit must be greater than lower_limit")
 
-        if config["grid_levels"] < 20 or config["grid_levels"] > 25:
-            raise ValueError("grid_levels must be between 20 and 25")
+        if config["grid_levels"] < 5 or config["grid_levels"] > 8:
+            raise ValueError("grid_levels must be between 5 and 8")
 
         if config["leverage"] < 1 or config["leverage"] > 5:
             raise ValueError("leverage must be between 1 and 5")
 
-        if config["investment_usd"] < 5 or config["investment_usd"] > 10:
-            raise ValueError("investment_usd must be between $5 and $10")
+        if config["investment_usd"] < 100 or config["investment_usd"] > 300:
+            raise ValueError("investment_usd must be between $100 and $300")
 
         if config["stop_loss_pct"] < 10 or config["stop_loss_pct"] > 15:
             raise ValueError("stop_loss_pct must be between 10% and 15%")
