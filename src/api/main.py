@@ -76,10 +76,18 @@ async def lifespan(app: FastAPI):
         init_result = trading_service.initialize()
         grids_recovered = 0
         if init_result.get("success"):
+            # Get total active grids (from DB + Binance sync)
+            grids_from_db = init_result.get("grids_from_db", 0)
             grid_sync = init_result.get("grid_sync", {})
-            grids_recovered = grid_sync.get('grids_synced', 0)
+            grids_from_binance = grid_sync.get('grids_synced', 0)
+
+            # Total active grids is what we restored from DB
+            # (Binance sync just updates order status, doesn't add new grids)
+            grids_recovered = len(trading_service.grid_engine.get_all_active_grids())
+
             app_logger.info(
-                f"Grid sync complete: {grids_recovered} grids recovered"
+                f"Grid sync complete: {grids_recovered} total active grids "
+                f"(DB: {grids_from_db}, Binance sync: {grids_from_binance})"
             )
         else:
             app_logger.warning(f"Grid sync failed: {init_result.get('error', 'Unknown')}")
