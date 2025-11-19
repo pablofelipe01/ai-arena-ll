@@ -89,11 +89,35 @@ class TradingService:
             return {"already_initialized": True}
 
         app_logger.info("=" * 60)
-        app_logger.info("INITIALIZING TRADING SERVICE FROM BINANCE")
+        app_logger.info("INITIALIZING TRADING SERVICE")
         app_logger.info("=" * 60)
 
         try:
-            # Sync grids from Binance orders
+            # Step 1: Recover grids from Supabase database
+            app_logger.info("Step 1: Recovering grids from database...")
+            db_grids = []
+            try:
+                db_grids = self.db.get_all_active_grids()
+                app_logger.info(f"Found {len(db_grids)} active grids in database")
+
+                # Restore grids to grid engine
+                grids_restored = 0
+                for db_grid in db_grids:
+                    try:
+                        restored = self.grid_engine.restore_grid_from_db(db_grid)
+                        if restored:
+                            grids_restored += 1
+                            app_logger.info(f"Restored grid {db_grid['grid_id']} for {db_grid['symbol']}")
+                    except Exception as e:
+                        app_logger.error(f"Failed to restore grid {db_grid.get('grid_id', 'UNKNOWN')}: {e}")
+
+                app_logger.info(f"Restored {grids_restored}/{len(db_grids)} grids from database")
+
+            except Exception as e:
+                app_logger.warning(f"Could not recover grids from database: {e}")
+
+            # Step 2: Sync with Binance to update order status
+            app_logger.info("Step 2: Syncing with Binance...")
             sync_result = self.grid_engine.sync_from_binance(self.executor.binance)
 
             self._grid_synced = True
@@ -101,6 +125,7 @@ class TradingService:
             app_logger.info("TradingService initialization complete")
             return {
                 "success": True,
+                "grids_from_db": len(db_grids),
                 "grid_sync": sync_result
             }
 
@@ -545,6 +570,29 @@ class TradingService:
                     f"{len(placement_result['placed'])} orders placed"
                 )
 
+                # Save grid to database
+                try:
+                    self.db.create_grid({
+                        "grid_id": grid.grid_id,
+                        "llm_id": llm_id,
+                        "symbol": symbol,
+                        "status": "ACTIVE",
+                        "upper_limit": float(grid_config.upper_limit),
+                        "lower_limit": float(grid_config.lower_limit),
+                        "grid_levels": grid_config.grid_levels,
+                        "spacing_type": grid_config.spacing_type,
+                        "leverage": grid_config.leverage,
+                        "investment_usd": float(grid_config.investment_usd),
+                        "stop_loss_pct": float(grid_config.stop_loss_pct),
+                        "cycles_completed": 0,
+                        "total_profit_usdt": 0.0,
+                        "total_fees_usdt": 0.0,
+                        "orders_placed": len(placement_result['placed'])
+                    })
+                    app_logger.info(f"[{llm_id}] Grid {grid.grid_id} saved to database")
+                except Exception as e:
+                    app_logger.error(f"[{llm_id}] Failed to save grid to database: {e}")
+
                 # Send Telegram notification
                 telegram = get_telegram_notifier()
                 if telegram and telegram.enabled:
@@ -585,6 +633,13 @@ class TradingService:
                 # Stop old grid
                 self.grid_engine.stop_grid(target_grid.grid_id, reason="UPDATE")
 
+                # Update old grid status in database
+                try:
+                    self.db.stop_grid(target_grid.grid_id, "UPDATE")
+                    app_logger.info(f"[{llm_id}] Old grid {target_grid.grid_id} stopped in database")
+                except Exception as e:
+                    app_logger.error(f"[{llm_id}] Failed to stop old grid in database: {e}")
+
                 # Create new grid with updated parameters
                 grid_config_data = decision["grid_config"]
                 grid_config = GridConfig(
@@ -619,6 +674,29 @@ class TradingService:
                     f"{len(placement_result['placed'])} new orders placed"
                 )
 
+                # Save new grid to database
+                try:
+                    self.db.create_grid({
+                        "grid_id": new_grid.grid_id,
+                        "llm_id": llm_id,
+                        "symbol": symbol,
+                        "status": "ACTIVE",
+                        "upper_limit": float(grid_config.upper_limit),
+                        "lower_limit": float(grid_config.lower_limit),
+                        "grid_levels": grid_config.grid_levels,
+                        "spacing_type": grid_config.spacing_type,
+                        "leverage": grid_config.leverage,
+                        "investment_usd": float(grid_config.investment_usd),
+                        "stop_loss_pct": float(grid_config.stop_loss_pct),
+                        "cycles_completed": 0,
+                        "total_profit_usdt": 0.0,
+                        "total_fees_usdt": 0.0,
+                        "orders_placed": len(placement_result['placed'])
+                    })
+                    app_logger.info(f"[{llm_id}] New grid {new_grid.grid_id} saved to database")
+                except Exception as e:
+                    app_logger.error(f"[{llm_id}] Failed to save new grid to database: {e}")
+
                 return {
                     "status": "SUCCESS",
                     "action": action,
@@ -645,6 +723,13 @@ class TradingService:
 
                 # Stop grid
                 self.grid_engine.stop_grid(target_grid.grid_id, reason="LLM_DECISION")
+
+                # Update grid status in database
+                try:
+                    self.db.stop_grid(target_grid.grid_id, "LLM_DECISION")
+                    app_logger.info(f"[{llm_id}] Grid {target_grid.grid_id} stopped in database")
+                except Exception as e:
+                    app_logger.error(f"[{llm_id}] Failed to stop grid in database: {e}")
 
                 app_logger.info(
                     f"[{llm_id}] Grid stopped for {symbol}: "

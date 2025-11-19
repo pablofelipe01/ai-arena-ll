@@ -83,10 +83,10 @@ class GridConfig:
             raise ValueError("Spacing type must be 'arithmetic' or 'geometric'")
         if leverage < 1 or leverage > 5:
             raise ValueError("Leverage must be between 1x and 5x")
-        if investment_usd < Decimal("100"):
-            raise ValueError("Minimum investment $100")
-        if investment_usd > Decimal("300"):
-            raise ValueError("Maximum investment $300 per grid")
+        if investment_usd < Decimal("30"):
+            raise ValueError("Minimum investment $30")
+        if investment_usd > Decimal("80"):
+            raise ValueError("Maximum investment $80 per grid")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -401,6 +401,77 @@ class GridEngine:
             grid.status = "ACTIVE"
             app_logger.info(f"[{grid.llm_id}] Grid {grid_id} resumed")
 
+    def restore_grid_from_db(self, db_grid: Dict[str, Any]) -> bool:
+        """
+        Restore a grid from database record.
+
+        Args:
+            db_grid: Grid record from database
+
+        Returns:
+            True if successfully restored, False otherwise
+        """
+        try:
+            grid_id = db_grid["grid_id"]
+            llm_id = db_grid["llm_id"]
+
+            # Check if grid already exists
+            if grid_id in self.active_grids:
+                app_logger.warning(f"Grid {grid_id} already exists, skipping restore")
+                return False
+
+            # Create GridConfig from DB data
+            config = GridConfig(
+                symbol=db_grid["symbol"],
+                upper_limit=Decimal(str(db_grid["upper_limit"])),
+                lower_limit=Decimal(str(db_grid["lower_limit"])),
+                grid_levels=db_grid["grid_levels"],
+                spacing_type=db_grid["spacing_type"],
+                leverage=db_grid["leverage"],
+                investment_usd=Decimal(str(db_grid["investment_usd"])),
+                stop_loss_pct=Decimal(str(db_grid["stop_loss_pct"]))
+            )
+
+            # Parse created_at
+            created_at = db_grid.get("created_at")
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            elif not isinstance(created_at, datetime):
+                created_at = datetime.utcnow()
+
+            # Create GridInstance
+            grid = GridInstance(
+                grid_id=grid_id,
+                llm_id=llm_id,
+                config=config,
+                created_at=created_at
+            )
+
+            # Restore performance metrics
+            grid.cycles_completed = db_grid.get("cycles_completed", 0)
+            grid.total_profit_usdt = Decimal(str(db_grid.get("total_profit_usdt", 0)))
+            grid.total_fees_usdt = Decimal(str(db_grid.get("total_fees_usdt", 0)))
+
+            # Add to active grids
+            self.active_grids[grid_id] = grid
+
+            if llm_id not in self.grids_by_llm:
+                self.grids_by_llm[llm_id] = []
+            if grid_id not in self.grids_by_llm[llm_id]:
+                self.grids_by_llm[llm_id].append(grid_id)
+
+            app_logger.info(
+                f"[{llm_id}] Grid restored from DB: {grid_id} for {config.symbol} "
+                f"(${config.lower_limit}-${config.upper_limit}, {config.grid_levels} levels, "
+                f"{grid.cycles_completed} cycles, ${float(grid.total_profit_usdt):.2f} profit)"
+            )
+
+            return True
+
+        except Exception as e:
+            app_logger.error(f"Failed to restore grid from DB: {e}")
+            return False
+
     def get_all_active_grids(self) -> List[GridInstance]:
         """Get all active grids."""
         return [g for g in self.active_grids.values() if g.status == "ACTIVE"]
@@ -453,7 +524,8 @@ class GridEngine:
         app_logger.info("=" * 60)
 
         # Get all open orders from Binance
-        symbols = ["ETHUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT"]
+        from src.clients.grid_prompts import ALLOWED_SYMBOLS
+        symbols = ALLOWED_SYMBOLS
         all_orders = []
 
         for symbol in symbols:

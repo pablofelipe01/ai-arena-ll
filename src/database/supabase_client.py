@@ -510,7 +510,7 @@ class SupabaseClient:
         self._ensure_connected()
 
         try:
-            response = self._client.table("trades").insert(trade_data).execute()
+            response = self._client.table("closed_trades").insert(trade_data).execute()
 
             if response.data and len(response.data) > 0:
                 app_logger.info(f"Created trade: {response.data[0]['id']}")
@@ -542,7 +542,7 @@ class SupabaseClient:
         self._ensure_connected()
 
         try:
-            query = self._client.table("trades").select("*").order("executed_at", desc=True).limit(limit)
+            query = self._client.table("closed_trades").select("*").order("closed_at", desc=True).limit(limit)
 
             if llm_id:
                 query = query.eq("llm_id", llm_id)
@@ -820,6 +820,169 @@ class SupabaseClient:
         except APIError as e:
             app_logger.error(f"Error fetching trading stats: {e}")
             raise DatabaseError(f"Failed to fetch trading stats: {str(e)}")
+
+    # ============================================
+    # GRIDS
+    # ============================================
+
+    def create_grid(self, grid_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a new grid trading configuration.
+
+        Args:
+            grid_data: Grid configuration data
+
+        Returns:
+            Created grid record
+        """
+        self._ensure_connected()
+
+        try:
+            response = self._client.table("grids").insert(grid_data).execute()
+
+            if response.data and len(response.data) > 0:
+                app_logger.info(f"Created grid: {grid_data.get('grid_id', 'UNKNOWN')}")
+                return response.data[0]
+
+            raise DatabaseError("Failed to create grid")
+
+        except APIError as e:
+            app_logger.error(f"Error creating grid: {e}")
+            raise DatabaseError(f"Failed to create grid: {str(e)}")
+
+    def get_grid(self, grid_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get grid by ID.
+
+        Args:
+            grid_id: Grid identifier
+
+        Returns:
+            Grid data or None
+        """
+        self._ensure_connected()
+
+        try:
+            response = self._client.table("grids").select("*").eq("grid_id", grid_id).execute()
+
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            return None
+
+        except APIError as e:
+            app_logger.error(f"Error fetching grid {grid_id}: {e}")
+            raise DatabaseError(f"Failed to fetch grid: {str(e)}")
+
+    def get_llm_grids(self, llm_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get all grids for an LLM.
+
+        Args:
+            llm_id: LLM identifier
+            status: Filter by status (optional)
+
+        Returns:
+            List of grids
+        """
+        self._ensure_connected()
+
+        try:
+            query = self._client.table("grids").select("*").eq("llm_id", llm_id)
+
+            if status:
+                query = query.eq("status", status)
+
+            response = query.order("created_at", desc=True).execute()
+            return response.data if response.data else []
+
+        except APIError as e:
+            app_logger.error(f"Error fetching grids for {llm_id}: {e}")
+            raise DatabaseError(f"Failed to fetch grids: {str(e)}")
+
+    def get_all_active_grids(self) -> List[Dict[str, Any]]:
+        """
+        Get all active grids across all LLMs.
+
+        Returns:
+            List of active grids
+        """
+        self._ensure_connected()
+
+        try:
+            response = (
+                self._client.table("grids")
+                .select("*")
+                .eq("status", "ACTIVE")
+                .order("created_at", desc=True)
+                .execute()
+            )
+            return response.data if response.data else []
+
+        except APIError as e:
+            app_logger.error(f"Error fetching active grids: {e}")
+            raise DatabaseError(f"Failed to fetch active grids: {str(e)}")
+
+    def update_grid(self, grid_id: str, update_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Update grid performance metrics.
+
+        Args:
+            grid_id: Grid identifier
+            update_data: Data to update
+
+        Returns:
+            Updated grid record
+        """
+        self._ensure_connected()
+
+        try:
+            from datetime import datetime
+            update_data["updated_at"] = datetime.now().isoformat()
+
+            response = self._client.table("grids").update(update_data).eq("grid_id", grid_id).execute()
+
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+
+            raise DatabaseError(f"Grid {grid_id} not found")
+
+        except APIError as e:
+            app_logger.error(f"Error updating grid {grid_id}: {e}")
+            raise DatabaseError(f"Failed to update grid: {str(e)}")
+
+    def stop_grid(self, grid_id: str, reason: str = "MANUAL") -> Dict[str, Any]:
+        """
+        Stop a grid and record the reason.
+
+        Args:
+            grid_id: Grid identifier
+            reason: Reason for stopping
+
+        Returns:
+            Updated grid record
+        """
+        self._ensure_connected()
+
+        try:
+            from datetime import datetime
+            update_data = {
+                "status": "STOPPED",
+                "stop_reason": reason,
+                "stopped_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat()
+            }
+
+            response = self._client.table("grids").update(update_data).eq("grid_id", grid_id).execute()
+
+            if response.data and len(response.data) > 0:
+                app_logger.info(f"Stopped grid {grid_id}: {reason}")
+                return response.data[0]
+
+            raise DatabaseError(f"Grid {grid_id} not found")
+
+        except APIError as e:
+            app_logger.error(f"Error stopping grid {grid_id}: {e}")
+            raise DatabaseError(f"Failed to stop grid: {str(e)}")
 
 
 # ============================================

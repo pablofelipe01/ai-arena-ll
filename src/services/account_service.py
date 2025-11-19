@@ -183,23 +183,32 @@ class AccountService:
             self.db.update_position_status(position_id, "CLOSED")
 
             # Save trade record
+            # Extract llm_id from trade_id format: "TRD-LLM-A-symbol-timestamp"
+            llm_id = "UNKNOWN"
+            if hasattr(trade, 'llm_id'):
+                llm_id = trade.llm_id
+            elif "-" in trade.trade_id:
+                parts = trade.trade_id.split("-")
+                if len(parts) >= 3:
+                    llm_id = f"{parts[1]}-{parts[2]}"  # "LLM-A", "LLM-B", etc.
+
             trade_data = {
                 "trade_id": trade.trade_id,
-                "llm_id": trade.trade_id.split("-")[0] if "-" in trade.trade_id else "UNKNOWN",  # Extract from position_id
+                "llm_id": llm_id,
                 "symbol": trade.symbol,
                 "side": trade.side,
                 "entry_price": float(trade.entry_price),
                 "exit_price": float(trade.exit_price),
                 "quantity": float(trade.quantity),
                 "leverage": trade.leverage,
-                "pnl_usdt": float(trade.pnl_usd),
-                "pnl_pct": float(trade.pnl_pct),
+                "realized_pnl": float(trade.pnl_usd),
+                "pnl_percentage": float(trade.pnl_pct),
                 "exit_reason": trade.exit_reason,
                 "opened_at": trade.opened_at.isoformat(),
                 "closed_at": trade.closed_at.isoformat()
             }
 
-            self.db.insert_trade(trade_data)
+            self.db.create_trade(trade_data)
 
             app_logger.debug(f"Closed position {position_id} in database")
 
