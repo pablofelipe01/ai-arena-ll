@@ -328,12 +328,14 @@ class TradingService:
                         f"{fills} fills, {cycles} cycles completed"
                     )
 
-                    # Send Telegram notification for completed cycles
+                    # Send Telegram notification and save trades for completed cycles
                     if cycles > 0:
                         telegram = get_telegram_notifier()
-                        if telegram and telegram.enabled:
-                            # Get cycle details from the result
-                            for cycle_data in result.get("cycles_detected", []):
+
+                        # Get cycle details from the result
+                        for cycle_data in result.get("cycles_detected", []):
+                            # Send Telegram notification
+                            if telegram and telegram.enabled:
                                 telegram.notify_grid_cycle_completed(
                                     llm_id=grid.llm_id,
                                     symbol=grid.config.symbol,
@@ -342,6 +344,43 @@ class TradingService:
                                     profit=float(cycle_data.get("profit", 0)),
                                     cycle_number=grid.cycles_completed
                                 )
+
+                            # Save trade to closed_trades table
+                            try:
+                                from datetime import datetime
+                                import uuid
+
+                                trade_id = f"GRID-{grid.llm_id}-{grid.config.symbol}-{uuid.uuid4().hex[:8]}"
+                                buy_price = float(cycle_data.get("buy_price", 0))
+                                sell_price = float(cycle_data.get("sell_price", 0))
+                                quantity = float(cycle_data.get("quantity", 0))
+                                profit = float(cycle_data.get("profit", 0))
+
+                                # Calculate PnL percentage
+                                pnl_pct = (profit / (buy_price * quantity) * 100) if (buy_price * quantity) > 0 else 0
+
+                                trade_data = {
+                                    "trade_id": trade_id,
+                                    "llm_id": grid.llm_id,
+                                    "grid_id": grid.grid_id,
+                                    "symbol": grid.config.symbol,
+                                    "side": "LONG",  # Grid cycles are buy low, sell high
+                                    "entry_price": buy_price,
+                                    "exit_price": sell_price,
+                                    "quantity": quantity,
+                                    "leverage": grid.config.leverage,
+                                    "realized_pnl": profit,
+                                    "pnl_percentage": pnl_pct,
+                                    "exit_reason": "GRID_CYCLE",
+                                    "opened_at": cycle_data.get("buy_time", datetime.utcnow()).isoformat() if isinstance(cycle_data.get("buy_time"), datetime) else datetime.utcnow().isoformat(),
+                                    "closed_at": datetime.utcnow().isoformat()
+                                }
+
+                                self.db.create_trade(trade_data)
+                                app_logger.info(f"[{grid.llm_id}] Saved grid cycle trade: {trade_id}, PnL: ${profit:.4f}")
+
+                            except Exception as e:
+                                app_logger.error(f"[{grid.llm_id}] Failed to save grid cycle trade: {e}")
 
                     # Store result
                     if grid.llm_id not in monitoring_results:
