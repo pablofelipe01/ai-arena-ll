@@ -32,7 +32,7 @@ def clean_database():
         print("\n✅ Connected to Supabase")
 
         # Delete from tables
-        tables_to_clear = ['positions', 'closed_trades', 'llm_decisions', 'grids', 'decisions']
+        tables_to_clear = ['positions', 'closed_trades', 'llm_decisions', 'grids', 'market_data', 'orders']
 
         for table in tables_to_clear:
             print(f"\n🗑️  Clearing {table}...")
