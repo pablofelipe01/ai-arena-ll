@@ -59,7 +59,14 @@ def clean_database():
         # Reset LLM accounts
         print(f"\n🔄 Resetting LLM accounts to initial balance...")
 
-        for llm_id in ['LLM-A', 'LLM-B', 'LLM-C']:
+        # LLM configurations
+        llm_configs = {
+            'LLM-A': {'provider': 'anthropic', 'model_name': 'claude-sonnet-4-20250514'},
+            'LLM-B': {'provider': 'deepseek', 'model_name': 'deepseek-chat'},
+            'LLM-C': {'provider': 'openai', 'model_name': 'gpt-4o'}
+        }
+
+        for llm_id, config in llm_configs.items():
             try:
                 # Try to update first
                 result = client.table('llm_accounts').select('*').eq('llm_id', llm_id).execute()
@@ -68,21 +75,33 @@ def clean_database():
                     # Account exists, update it
                     client.table('llm_accounts').update({
                         'current_balance': initial_balance,
+                        'initial_balance': initial_balance,
                         'total_pnl': 0,
+                        'realized_pnl': 0,
+                        'unrealized_pnl': 0,
+                        'margin_used': 0,
                         'total_trades': 0,
                         'winning_trades': 0,
-                        'losing_trades': 0
+                        'losing_trades': 0,
+                        'open_positions': 0
                     }).eq('llm_id', llm_id).execute()
                     print(f"   ✅ {llm_id}: Reset to ${initial_balance:.2f}")
                 else:
-                    # Account doesn't exist, create it
+                    # Account doesn't exist, create it with all required fields
                     client.table('llm_accounts').insert({
                         'llm_id': llm_id,
+                        'provider': config['provider'],
+                        'model_name': config['model_name'],
                         'current_balance': initial_balance,
+                        'initial_balance': initial_balance,
                         'total_pnl': 0,
+                        'realized_pnl': 0,
+                        'unrealized_pnl': 0,
+                        'margin_used': 0,
                         'total_trades': 0,
                         'winning_trades': 0,
-                        'losing_trades': 0
+                        'losing_trades': 0,
+                        'open_positions': 0
                     }).execute()
                     print(f"   ✅ {llm_id}: Created with ${initial_balance:.2f}")
             except Exception as e:
