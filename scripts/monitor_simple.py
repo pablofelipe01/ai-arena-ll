@@ -36,22 +36,23 @@ def create_dashboard():
     leaderboard_data = get_api_data("/trading/leaderboard")
     binance_data = get_api_data("/trading/binance-status")  # Real Binance data
     market_data = get_api_data("/market/prices")
-    
+    grids_data = get_api_data("/trading/grids")  # Active grids
+
     if not leaderboard_data:
         return Panel("[red]✗ Cannot connect to trading system[/red]", title="Error")
-    
+
     # Create layout
     layout = Layout()
     layout.split_column(
         Layout(create_header(), size=3),
         Layout(name="main", ratio=1)
     )
-    
+
     layout["main"].split_row(
         Layout(name="left", ratio=2),
         Layout(name="right", ratio=1)
     )
-    
+
     # Left side
     layout["left"].split_column(
         Layout(create_leaderboard(leaderboard_data)),
@@ -61,9 +62,10 @@ def create_dashboard():
     # Right side
     layout["right"].split_column(
         Layout(create_summary(binance_data)),
+        Layout(create_grids_panel(grids_data)),
         Layout(create_market(market_data))
     )
-    
+
     return layout
 
 
@@ -219,6 +221,34 @@ def create_summary(data):
     return Panel(text, title="📈 Live Summary (Binance)", box=box.ROUNDED, border_style="green")
 
 
+def create_grids_panel(data):
+    """Create active grids panel."""
+    if not data or "grids" not in data:
+        return Panel("[dim]No grid data[/dim]", title="🔲 Active Grids", box=box.ROUNDED)
+
+    grids_by_llm = data.get("grids", {})
+    summary = data.get("summary", {})
+    total_grids = summary.get("total_active_grids", 0)
+
+    # Build text
+    lines = [f"[bold]Total:[/bold] [cyan]{total_grids}[/cyan] grids\n"]
+
+    for llm_id in ["LLM-A", "LLM-B", "LLM-C"]:
+        llm_grids = grids_by_llm.get(llm_id, [])
+        count = len(llm_grids)
+
+        # Get symbols
+        if llm_grids:
+            symbols = [g.get("symbol", "?").replace("USDT", "") for g in llm_grids]
+            symbols_str = ", ".join(symbols)
+            lines.append(f"[bold]{llm_id}:[/bold] {count} ({symbols_str})")
+        else:
+            lines.append(f"[bold]{llm_id}:[/bold] [dim]0[/dim]")
+
+    text = "\n".join(lines)
+    return Panel(text, title="🔲 Active Grids", box=box.ROUNDED, border_style="yellow")
+
+
 def create_market(data):
     """Create market snapshot."""
     table = Table(
@@ -227,18 +257,18 @@ def create_market(data):
         show_header=True,
         header_style="bold blue"
     )
-    
+
     table.add_column("Symbol", width=8)
     table.add_column("Price", justify="right", width=12)
-    
+
     if not data:
         table.add_row("—", "No data")
         return table
-    
+
     for symbol, price in sorted(data.items()):
         symbol_short = symbol.replace("USDT", "")
         table.add_row(symbol_short, f"${price:.4f}")
-    
+
     return table
 
 
