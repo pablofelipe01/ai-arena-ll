@@ -623,7 +623,8 @@ async def get_binance_status(
 
         # Get all open orders
         all_orders = []
-        symbols = ["ETHUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT"]
+        from config.settings import settings
+        symbols = settings.available_pairs_list
         for symbol in symbols:
             try:
                 orders = binance.get_open_orders(symbol)

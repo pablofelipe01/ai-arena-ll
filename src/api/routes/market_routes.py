@@ -117,7 +117,7 @@ async def get_ticker(
     Get ticker for specific symbol.
 
     Parameters:
-    - symbol: Trading pair (ETHUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT)
+    - symbol: Trading pair (DOGEUSDT, TRXUSDT, HBARUSDT, XLMUSDT, ADAUSDT, ALGOUSDT)
 
     Returns:
     - Current price
@@ -159,7 +159,7 @@ async def get_indicators(
     Get technical indicators for specific symbol.
 
     Parameters:
-    - symbol: Trading pair (ETHUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT)
+    - symbol: Trading pair (DOGEUSDT, TRXUSDT, HBARUSDT, XLMUSDT, ADAUSDT, ALGOUSDT)
 
     Returns:
     - RSI (14 period)
@@ -242,7 +242,7 @@ async def get_price(
     Get current price for specific symbol.
 
     Parameters:
-    - symbol: Trading pair (ETHUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT)
+    - symbol: Trading pair (DOGEUSDT, TRXUSDT, HBARUSDT, XLMUSDT, ADAUSDT, ALGOUSDT)
     - use_cache: Use cached price (default: true, 60s TTL)
 
     Returns:

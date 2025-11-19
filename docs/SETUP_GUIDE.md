@@ -372,11 +372,33 @@ pip list | grep anthropic  # Debe aparecer anthropic
 
 ### 5.2 Crear Tablas
 
-**Opción A: SQL Editor (Recomendado)**
+**⚠️ IMPORTANTE: Usa el schema correcto para Grid Trading**
 
-1. Ir a "SQL Editor" en Supabase
-2. Crear nuevo query
-3. Copiar y ejecutar este SQL:
+1. **Ir a "SQL Editor" en Supabase:**
+   - En el menú lateral, clic en "SQL Editor"
+   - Clic en "New Query"
+
+2. **Copiar el schema SQL correcto:**
+   - Abre el archivo: `database/grid_trading_schema.sql`
+   - Copia TODO el contenido (desde la primera línea hasta el final)
+
+3. **Ejecutar el schema:**
+   - Pega el contenido en el SQL Editor de Supabase
+   - Clic en "Run" (o Cmd+Enter)
+   - Debe mostrar: "Success. No rows returned"
+
+4. **Verificar que se crearon las tablas:**
+   - Ir a "Table Editor" en el menú lateral
+   - Deberías ver 7 tablas:
+     - ✅ `llm_accounts` (3 filas: LLM-A, LLM-B, LLM-C)
+     - ✅ `grids`
+     - ✅ `positions`
+     - ✅ `closed_trades`
+     - ✅ `llm_decisions`
+     - ✅ `market_data`
+     - ✅ `orders`
+
+**El schema completo está en:**
 
 ```sql
 -- Tabla de cuentas LLM
@@ -635,10 +657,10 @@ DEEPSEEK_API_KEY=tu_api_key_aqui
 # LLM CONFIGURATION
 # ============================================
 # LLM-A: Claude
-LLM_A_PROVIDER=claude
+LLM_A_PROVIDER=anthropic
 LLM_A_MODEL=claude-sonnet-4-20250514
 LLM_A_MAX_TOKENS=4000
-LLM_A_TEMPERATURE=0.5
+LLM_A_TEMPERATURE=0.7
 
 # LLM-B: DeepSeek
 LLM_B_PROVIDER=deepseek
@@ -651,7 +673,7 @@ LLM_B_BASE_URL=https://api.deepseek.com
 LLM_C_PROVIDER=openai
 LLM_C_MODEL=gpt-4o
 LLM_C_MAX_TOKENS=4000
-LLM_C_TEMPERATURE=0.9
+LLM_C_TEMPERATURE=0.7
 
 # ============================================
 # LLM DECISION MAKING
@@ -1208,7 +1230,7 @@ python scripts/monitor_simple.py
 
 ---
 
-**Última actualización:** 2025-11-13
-**Versión:** 1.0
+**Última actualización:** 2025-11-19
+**Versión:** 1.1
 **Autor:** Pablo Felipe
 **Repositorio:** [https://github.com/pablofelipe01/ai-arena-ll](https://github.com/pablofelipe01/ai-arena-ll)

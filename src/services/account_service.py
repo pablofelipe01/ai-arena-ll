@@ -118,7 +118,7 @@ class AccountService:
             account_data = {
                 "llm_id": llm_id,
                 "provider": llm_config.get("provider", "unknown"),
-                "model": llm_config.get("model", "unknown"),
+                "model_name": llm_config.get("model", "unknown"),
                 "temperature": float(llm_config.get("temperature", 0.7)),
                 "max_tokens": llm_config.get("max_tokens", 1000),
                 "balance": float(account.balance_usdt),
@@ -381,13 +381,18 @@ class AccountService:
             positions_by_llm = {}
             for pos in binance_positions:
                 # Parse clientOrderId to get LLM owner
-                # Format: LLM-A_BTCUSDT_1234567890
+                # Format 1 (regular): LLM-A_BTCUSDT_1234567890
+                # Format 2 (grid): GRID_LLM-A_BTCUSDT_hash_SIDE_level
                 client_order_id = pos.get("clientOrderId")
                 llm_owner = None
 
                 if client_order_id:
                     parts = client_order_id.split("_")
-                    if len(parts) >= 1 and parts[0] in self.accounts:
+                    # Check for grid order format first (starts with "GRID")
+                    if len(parts) >= 2 and parts[0] == "GRID" and parts[1] in self.accounts:
+                        llm_owner = parts[1]
+                    # Then check regular order format
+                    elif len(parts) >= 1 and parts[0] in self.accounts:
                         llm_owner = parts[0]
 
                 # If we can't determine owner, skip this position

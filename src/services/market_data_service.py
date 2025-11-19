@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 import time
 
 from src.clients.binance_client import BinanceClient
-from src.clients.prompts import ALLOWED_SYMBOLS
+from src.clients.grid_prompts import ALLOWED_SYMBOLS
 from src.utils.logger import app_logger
 
 

@@ -74,7 +74,8 @@ def cancel_all_orders(client: BinanceClient):
     print("="*70)
 
     # Get all symbols with open orders
-    symbols = ['ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT']
+    from config.settings import settings
+    symbols = settings.available_pairs_list
 
     total_cancelled = 0
 
@@ -132,7 +133,7 @@ def show_final_status(client: BinanceClient):
 
         # Check remaining orders
         all_orders_count = 0
-        for symbol in ['ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT', 'ADAUSDT', 'AVAXUSDT']:
+        for symbol in settings.available_pairs_list:
             try:
                 orders = client.get_open_orders(symbol)
                 all_orders_count += len(orders)

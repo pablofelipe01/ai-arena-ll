@@ -9,12 +9,12 @@ from typing import Dict, List, Any
 
 
 # Trading constants for grid
-ALLOWED_SYMBOLS = ["ETHUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT"]
+ALLOWED_SYMBOLS = ["DOGEUSDT", "TRXUSDT", "HBARUSDT", "XLMUSDT", "ADAUSDT", "ALGOUSDT"]
 MAX_LEVERAGE = 5
 MIN_GRID_LEVELS = 5
 MAX_GRID_LEVELS = 8
-MIN_INVESTMENT = 100
-MAX_INVESTMENT = 300
+MIN_INVESTMENT = 30
+MAX_INVESTMENT = 80
 MIN_STOP_LOSS_PCT = 10
 MAX_STOP_LOSS_PCT = 15
 
@@ -35,10 +35,10 @@ GRID TRADING FUNDAMENTALS:
 6. **Stop Loss**: Critical for protection when price breaks out of range (10-15% below)
 
 BINANCE FUTURES CONSTRAINTS:
-- Symbols: ETHUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT
+- Symbols: DOGEUSDT, TRXUSDT, HBARUSDT, XLMUSDT, ADAUSDT, ALGOUSDT
 - Leverage: 1x to 5x maximum
 - Grid Levels: 5 to 8 levels
-- Investment: $100 to $300 USD per grid
+- Investment: $30 to $80 USD per grid
 - Minimum spacing: > 0.14% (to cover fees: 2 × 0.07% = 0.14%)
 - Fees: Taker 0.05%, Maker 0.02% (use 0.05% for calculations)
 
@@ -60,7 +60,7 @@ You MUST respond with a JSON object:
         "grid_levels": <5-8>,
         "spacing_type": "geometric" | "arithmetic",
         "leverage": <1-5>,
-        "investment_usd": <100-300>,
+        "investment_usd": <30-80>,
         "stop_loss_pct": <10-15>
     }} | null,
     "reasoning": "<your detailed analysis>",
@@ -120,11 +120,11 @@ GRID CONFIGURATION GUIDELINES:
    - Aggressive: 4-5x
    - Consider volatility: higher volatility → lower leverage
 
-5. **Investment**: $100-300 per grid
-   - Start conservative: $100-150
-   - Increase if grid performs well: $200-300
+5. **Investment**: $30-80 per grid
+   - Start conservative: $30-50
+   - Increase if grid performs well: $60-80
    - Consider: you can run multiple grids simultaneously
-   - Ensure: investment / levels ≥ $20 per order (Binance minimum notional)
+   - Ensure: investment / levels ≥ $5 per order (practical minimum for low-price assets)
 
 6. **Stop Loss**: 10-15%
    - Tighter (10-12%) for volatile pairs
@@ -460,8 +460,8 @@ def parse_grid_decision(response_text: str) -> Dict[str, Any]:
         if config["leverage"] < 1 or config["leverage"] > 5:
             raise ValueError("leverage must be between 1 and 5")
 
-        if config["investment_usd"] < 100 or config["investment_usd"] > 300:
-            raise ValueError("investment_usd must be between $100 and $300")
+        if config["investment_usd"] < 30 or config["investment_usd"] > 80:
+            raise ValueError("investment_usd must be between $30 and $80")
 
         if config["stop_loss_pct"] < 10 or config["stop_loss_pct"] > 15:
             raise ValueError("stop_loss_pct must be between 10% and 15%")

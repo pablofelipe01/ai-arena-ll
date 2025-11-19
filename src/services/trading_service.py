@@ -341,7 +341,7 @@ class TradingService:
                                     symbol=grid.config.symbol,
                                     buy_price=float(cycle_data.get("buy_price", 0)),
                                     sell_price=float(cycle_data.get("sell_price", 0)),
-                                    profit=float(cycle_data.get("profit", 0)),
+                                    profit=float(cycle_data.get("net_profit", 0)),
                                     cycle_number=grid.cycles_completed
                                 )
 
@@ -354,7 +354,7 @@ class TradingService:
                                 buy_price = float(cycle_data.get("buy_price", 0))
                                 sell_price = float(cycle_data.get("sell_price", 0))
                                 quantity = float(cycle_data.get("quantity", 0))
-                                profit = float(cycle_data.get("profit", 0))
+                                profit = float(cycle_data.get("net_profit", 0))
 
                                 # Calculate PnL percentage
                                 pnl_pct = (profit / (buy_price * quantity) * 100) if (buy_price * quantity) > 0 else 0

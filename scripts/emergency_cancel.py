@@ -31,7 +31,8 @@ def preview_orders(binance: BinanceClient):
     print("PREVIEW MODE - No changes will be made")
     print("="*70 + "\n")
 
-    symbols = ["ETHUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT"]
+    from config.settings import settings
+    symbols = settings.available_pairs_list
     total_orders = 0
     order_details = []
 
@@ -112,7 +113,8 @@ def cancel_all_orders(binance: BinanceClient) -> int:
     print("CANCELLING ALL ORDERS")
     print("="*70 + "\n")
 
-    symbols = ["ETHUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT"]
+    from config.settings import settings
+    symbols = settings.available_pairs_list
     total_cancelled = 0
     total_failed = 0
 
@@ -227,12 +229,8 @@ Examples:
     # Initialize Binance client
     print("\nConnecting to Binance...")
     try:
-        binance = BinanceClient(
-            api_key=settings.BINANCE_API_KEY,
-            api_secret=settings.BINANCE_API_SECRET,
-            testnet=settings.BINANCE_TESTNET
-        )
-        print("✓ Connected to Binance Testnet" if settings.BINANCE_TESTNET else "✓ Connected to Binance MAINNET")
+        binance = BinanceClient(testnet=settings.USE_TESTNET)
+        print("✓ Connected to Binance Testnet" if settings.USE_TESTNET else "✓ Connected to Binance MAINNET")
     except Exception as e:
         print(f"❌ Failed to connect to Binance: {e}")
         sys.exit(1)

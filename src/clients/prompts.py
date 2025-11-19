@@ -10,7 +10,7 @@ from decimal import Decimal
 
 
 # Trading constants
-ALLOWED_SYMBOLS = ["ETHUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT"]
+ALLOWED_SYMBOLS = ["DOGEUSDT", "TRXUSDT", "HBARUSDT", "XLMUSDT", "ADAUSDT", "ALGOUSDT"]
 MAX_LEVERAGE = 10
 MAX_POSITIONS = 3
 MIN_TRADE_SIZE = 10
@@ -22,7 +22,7 @@ SYSTEM_PROMPT = """You are an expert cryptocurrency futures trader with deep kno
 Your task is to analyze market data and make trading decisions for a virtual trading account with $100 USDT on Binance Futures.
 
 IMPORTANT RULES:
-1. You can only trade these symbols: ETHUSDT, BNBUSDT, XRPUSDT, DOGEUSDT, ADAUSDT, AVAXUSDT
+1. You can only trade these symbols: DOGEUSDT, TRXUSDT, HBARUSDT, XLMUSDT, ADAUSDT, ALGOUSDT
 2. Maximum leverage: 10x
 3. Maximum open positions: 3 simultaneous positions
 4. Minimum trade size: $10 USD
@@ -34,7 +34,7 @@ RESPONSE FORMAT:
 You MUST respond with a JSON object containing:
 {{
     "action": "BUY" | "SELL" | "CLOSE" | "HOLD",
-    "symbol": "ETHUSDT" | "BNBUSDT" | "XRPUSDT" | "DOGEUSDT" | "ADAUSDT" | "AVAXUSDT" | null,
+    "symbol": "DOGEUSDT" | "TRXUSDT" | "HBARUSDT" | "XLMUSDT" | "ADAUSDT" | "ALGOUSDT" | null,
     "quantity_usd": <number between 10 and 40> | null,
     "leverage": <integer between 1 and 10> | null,
     "stop_loss_pct": <number between 1 and 20> | null,

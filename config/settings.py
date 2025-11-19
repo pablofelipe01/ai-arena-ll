@@ -121,11 +121,11 @@ class Settings(BaseSettings):
     # ============================================
     # TRADING CONFIGURATION
     # ============================================
-    AVAILABLE_PAIRS: str = "ETHUSDT,BNBUSDT,XRPUSDT,DOGEUSDT,ADAUSDT,AVAXUSDT"
+    AVAILABLE_PAIRS: str = "DOGEUSDT,TRXUSDT,HBARUSDT,XLMUSDT,ADAUSDT,ALGOUSDT"
     MIN_TRADE_SIZE_USD: float = 5.0
     MAX_TRADE_SIZE_USD: float = 40.0
     MAX_POSITION_PCT: float = 0.40
-    MAX_OPEN_POSITIONS: int = 5
+    MAX_OPEN_POSITIONS: int = 10
     MAX_POSITIONS_PER_ASSET: int = 2
     MAX_LEVERAGE: int = 10
     RECOMMENDED_LEVERAGE: int = 3
