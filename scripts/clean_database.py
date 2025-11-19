@@ -7,12 +7,14 @@ Deletes all data and resets LLM accounts to initial balance.
 
 import sys
 from pathlib import Path
+from decimal import Decimal
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.database.supabase_client import get_supabase_client
+from src.clients.binance_client import BinanceClient
 from config.settings import settings
 
 
@@ -41,9 +43,21 @@ def clean_database():
             except Exception as e:
                 print(f"   ⚠️  Error (table may not exist): {e}")
 
+        # Get actual balance from Binance
+        print(f"\n💰 Getting balance from Binance...")
+        try:
+            binance = BinanceClient(testnet=settings.USE_TESTNET)
+            total_balance = binance.get_balance()
+            initial_balance = float(total_balance / Decimal("3"))
+            print(f"   Total balance: ${float(total_balance):.2f}")
+            print(f"   Per LLM: ${initial_balance:.2f}")
+        except Exception as e:
+            print(f"   ⚠️  Could not get Binance balance: {e}")
+            print(f"   Using default: ${settings.INITIAL_BALANCE_PER_LLM}")
+            initial_balance = settings.INITIAL_BALANCE_PER_LLM
+
         # Reset LLM accounts
         print(f"\n🔄 Resetting LLM accounts to initial balance...")
-        initial_balance = settings.INITIAL_BALANCE_PER_LLM
 
         for llm_id in ['LLM-A', 'LLM-B', 'LLM-C']:
             try:

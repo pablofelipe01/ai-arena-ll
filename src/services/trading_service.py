@@ -586,8 +586,7 @@ class TradingService:
                         "stop_loss_pct": float(grid_config.stop_loss_pct),
                         "cycles_completed": 0,
                         "total_profit_usdt": 0.0,
-                        "total_fees_usdt": 0.0,
-                        "orders_placed": len(placement_result['placed'])
+                        "total_fees_usdt": 0.0
                     })
                     app_logger.info(f"[{llm_id}] Grid {grid.grid_id} saved to database")
                 except Exception as e:
@@ -690,8 +689,7 @@ class TradingService:
                         "stop_loss_pct": float(grid_config.stop_loss_pct),
                         "cycles_completed": 0,
                         "total_profit_usdt": 0.0,
-                        "total_fees_usdt": 0.0,
-                        "orders_placed": len(placement_result['placed'])
+                        "total_fees_usdt": 0.0
                     })
                     app_logger.info(f"[{llm_id}] New grid {new_grid.grid_id} saved to database")
                 except Exception as e:

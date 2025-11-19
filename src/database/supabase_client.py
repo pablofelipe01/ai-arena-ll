@@ -967,7 +967,6 @@ class SupabaseClient:
             from datetime import datetime
             update_data = {
                 "status": "STOPPED",
-                "stop_reason": reason,
                 "stopped_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat()
             }

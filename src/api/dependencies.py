@@ -138,10 +138,26 @@ def get_account_service() -> AccountService:
         app_logger.info("Initializing AccountService...")
         supabase = get_supabase_client()
         binance = get_binance_client()
+
+        # Get actual balance from Binance and divide by 3 LLMs
+        try:
+            total_balance = binance.get_balance()
+            initial_balance_per_llm = total_balance / Decimal("3")
+            app_logger.info(
+                f"Binance total balance: ${total_balance:.2f} → "
+                f"${initial_balance_per_llm:.2f} per LLM"
+            )
+        except Exception as e:
+            app_logger.warning(
+                f"Could not get Binance balance: {e}. "
+                f"Using default ${settings.INITIAL_BALANCE_PER_LLM}"
+            )
+            initial_balance_per_llm = Decimal(str(settings.INITIAL_BALANCE_PER_LLM))
+
         _account_service = AccountService(
             supabase_client=supabase,
             binance_client=binance,
-            initial_balance=Decimal(str(settings.INITIAL_BALANCE_PER_LLM))
+            initial_balance=initial_balance_per_llm
         )
         app_logger.info("AccountService initialized")
     return _account_service
