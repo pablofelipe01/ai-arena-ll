@@ -34,6 +34,7 @@ class GridLevel:
         self.order_id: Optional[str] = None
         self.filled_at: Optional[datetime] = None
         self.filled_price: Optional[Decimal] = None
+        self.cycle_processed: bool = False  # Track if this level was already part of a completed cycle
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -45,7 +46,8 @@ class GridLevel:
             "status": self.status,
             "order_id": self.order_id,
             "filled_at": self.filled_at.isoformat() if self.filled_at else None,
-            "filled_price": float(self.filled_price) if self.filled_price else None
+            "filled_price": float(self.filled_price) if self.filled_price else None,
+            "cycle_processed": self.cycle_processed
         }
 
 
@@ -214,6 +216,7 @@ class GridInstance:
                 level.order_id = order_id
                 level.filled_price = filled_price
                 level.filled_at = filled_at
+                level.cycle_processed = False  # Reset to allow participation in new cycle
                 app_logger.info(
                     f"[{self.llm_id}] Grid level filled: {level_id} @ ${filled_price}"
                 )

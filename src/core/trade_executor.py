@@ -631,24 +631,43 @@ class TradeExecutor:
         A cycle is complete when:
         1. A buy order is filled
         2. The corresponding sell order above it is filled
+        3. Neither level has been processed in a previous cycle detection
 
         Args:
             grid_instance: GridInstance
             llm_id: LLM identifier
 
         Returns:
-            List of detected cycles
+            List of detected cycles (no duplicates)
         """
         cycles = []
-        filled_buys = [level for level in grid_instance.buy_levels if level.status == "FILLED"]
-        filled_sells = [level for level in grid_instance.sell_levels if level.status == "FILLED"]
 
-        # Match buy-sell pairs
+        # Get filled levels that haven't been processed yet
+        # Use getattr for backward compatibility with existing grids
+        filled_buys = [
+            level for level in grid_instance.buy_levels
+            if level.status == "FILLED" and not getattr(level, 'cycle_processed', False)
+        ]
+        filled_sells = [
+            level for level in grid_instance.sell_levels
+            if level.status == "FILLED" and not getattr(level, 'cycle_processed', False)
+        ]
+
+        # Track which levels we've already paired in this detection run
+        processed_in_run = set()
+
+        # Match buy-sell pairs (each level can only be used once)
         for buy_level in filled_buys:
+            # Skip if already processed in this run
+            if buy_level.level_id in processed_in_run:
+                continue
+
             # Find corresponding sell level (next price above buy)
+            # that hasn't been processed yet
             matching_sells = [
                 sell for sell in filled_sells
-                if sell.price > buy_level.price and sell.status == "FILLED"
+                if sell.price > buy_level.price
+                and sell.level_id not in processed_in_run
             ]
 
             if matching_sells:
@@ -681,7 +700,9 @@ class TradeExecutor:
                     "quantity": float(quantity),
                     "gross_profit": float(gross),
                     "fees": float(fees),
-                    "net_profit": float(net)
+                    "net_profit": float(net),
+                    "buy_time": buy_level.filled_at,
+                    "sell_time": sell_level.filled_at
                 })
 
                 app_logger.info(
@@ -689,6 +710,14 @@ class TradeExecutor:
                     f"Buy @ ${buy_price}, Sell @ ${sell_price}, "
                     f"Net profit: ${net:.4f}"
                 )
+
+                # Mark these levels as processed to prevent duplicate detection
+                buy_level.cycle_processed = True
+                sell_level.cycle_processed = True
+
+                # Track in this run
+                processed_in_run.add(buy_level.level_id)
+                processed_in_run.add(sell_level.level_id)
 
                 # Reset levels to PENDING for next cycle
                 buy_level.status = "PENDING"
